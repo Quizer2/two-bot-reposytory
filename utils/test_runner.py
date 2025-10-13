@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🧪 AUTOMATYCZNY RUNNER TESTÓW - MODUŁ STARTOWY
-==============================================
+== == == == == == == == == == == == == == == == == == == ==
 
 Moduł do automatycznego uruchamiania testów przy starcie aplikacji.
 Zapewnia szybkie sprawdzenie stanu systemu przed uruchomieniem głównej aplikacji.

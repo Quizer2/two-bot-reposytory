@@ -42,7 +42,7 @@ def test_conflict_check_passes_clean_files(tmp_path, monkeypatch):
 
 def test_conflict_check_ignores_ascii_separators(tmp_path, monkeypatch):
     banner = tmp_path / "banner.txt"
-    banner.write_text("================================\n", encoding="utf-8")
+    banner.write_text("== == == == == == == == == == == == == == == == == == == ==\n", encoding="utf-8")
 
     monkeypatch.setattr(readiness, "_list_tracked_files", lambda: [banner])
 
