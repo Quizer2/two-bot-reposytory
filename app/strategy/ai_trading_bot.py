@@ -4,14 +4,17 @@ do automatycznego doboru strategii i maksymalizacji zysków
 """
 
 import asyncio
+import json
+import logging
+import os
+import pickle
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
-import json
-import pickle
-from dataclasses import dataclass
-import logging
 
 # Machine Learning imports
 try:
@@ -22,6 +25,7 @@ try:
     import joblib
     ML_AVAILABLE = True
 except ImportError:
+    joblib = None  # type: ignore
     ML_AVAILABLE = False
 
 from .base_bot import BaseBot
@@ -30,6 +34,7 @@ from .grid import GridStrategy
 from .scalping import ScalpingStrategy
 from ..risk_management import RiskManager
 from ..notifications import NotificationManager
+from utils.config_manager import get_config_manager
 from utils.logger import get_logger
 
 
@@ -43,6 +48,11 @@ class MarketCondition:
     macd_signal: float
     bollinger_position: float
     market_sentiment: str  # 'bullish', 'bearish', 'neutral'
+    ai_confidence: float = 0.0
+    risk_level: str = "unknown"
+    technicals: Dict[str, Any] = field(default_factory=dict)
+    feature_vector: Dict[str, Any] = field(default_factory=dict)
+    strategy_summary: List[Any] = field(default_factory=list)
     
     
 @dataclass
@@ -164,7 +174,12 @@ class AITradingBot(BaseBot):
         self.last_trade_time = None
         self.total_trades = 0
         self.successful_trades = 0
-        
+
+        # Provider danych AI dla bogatszego kontekstu rynkowego
+        self.ai_data_provider = None
+        self.latest_ai_snapshot: Optional[Dict[str, Any]] = None
+        self.training_profile: str = "paper"
+
         self.logger.info(f"AI Trading Bot zainicjalizowany - cel: ${self.target_hourly_profit}/h")
     
     async def initialize(self, db_manager, risk_manager, exchange, data_manager=None):
@@ -186,9 +201,11 @@ class AITradingBot(BaseBot):
             
             # Aktualizuj atrybuty BaseBot bez wywoływania konstruktora ponownie
             self.notification_manager = self.notification_manager or None
-            
+
             self.logger.info("Inicjalizacja AI Trading Bot...")
-            
+
+            self._sync_training_profile(initial=True)
+
             # Załaduj historyczne dane
             await self._load_historical_data()
             
@@ -197,7 +214,10 @@ class AITradingBot(BaseBot):
                 await self._initialize_ml_model()
             else:
                 self.logger.warning("Biblioteki ML niedostępne - używanie uproszczonej logiki")
-            
+
+            # Zsynchronizuj kontekst AI (dane rynkowe + ryzyko)
+            await self._load_ai_context()
+
             # Przeprowadź początkową analizę rynku
             await self._analyze_market_conditions()
             
@@ -220,6 +240,9 @@ class AITradingBot(BaseBot):
             # Główna pętla AI bota
             while self.is_running:
                 try:
+                    if self._sync_training_profile():
+                        await self._load_historical_data()
+
                     # Analiza warunków rynkowych
                     await self._analyze_market_conditions()
                     
@@ -258,9 +281,11 @@ class AITradingBot(BaseBot):
         """Analiza aktualnych warunków rynkowych"""
         try:
             pair = self.parameters['pair']
-            
+
             # Pobierz dane OHLCV
             ohlcv_data = await self.exchange.get_ohlcv(pair, '1h', limit=100)
+            if not ohlcv_data:
+                ohlcv_data = await self._fallback_ohlcv_from_provider(pair)
             if not ohlcv_data:
                 return self.current_market_condition
             
@@ -285,7 +310,15 @@ class AITradingBot(BaseBot):
                 bollinger_position=bollinger_position,
                 market_sentiment=market_sentiment
             )
-            
+
+            snapshot = None
+            if self.ai_data_provider is not None:
+                snapshot = self.latest_ai_snapshot or self.ai_data_provider.get_last_snapshot()
+                if snapshot:
+                    market_condition = self._enrich_market_condition_with_ai(
+                        market_condition, snapshot, pair
+                    )
+
             self.current_market_condition = market_condition
             self.market_history.append(market_condition)
             
@@ -302,14 +335,116 @@ class AITradingBot(BaseBot):
         except Exception as e:
             self.logger.error(f"Błąd analizy warunków rynkowych: {e}")
             return self.current_market_condition
+
+    def _enrich_market_condition_with_ai(
+        self, condition: MarketCondition, snapshot: Optional[Dict[str, Any]], pair: str
+    ) -> MarketCondition:
+        try:
+            if not snapshot:
+                return condition
+            symbol_key = self._normalise_symbol_for_provider(pair)
+            technicals = snapshot.get('technical_indicators', {}) or {}
+            technical_entry = technicals.get(symbol_key)
+            if technical_entry is None:
+                for key, value in technicals.items():
+                    if self._normalise_symbol_for_provider(key) == symbol_key:
+                        technical_entry = value
+                        break
+            if isinstance(technical_entry, dict):
+                condition.technicals = technical_entry
+                condition.rsi = float(technical_entry.get('rsi', condition.rsi) or condition.rsi)
+                trend_strength = technical_entry.get('trend_strength')
+                if trend_strength is not None:
+                    condition.trend_strength = float(trend_strength)
+
+            feature_matrix = snapshot.get('feature_matrix', []) or []
+            feature_entry = None
+            for entry in feature_matrix:
+                bot_match = str(entry.get('bot_id')) == str(self.bot_id)
+                symbol_match = self._normalise_symbol_for_provider(entry.get('symbol', '')) == symbol_key
+                if bot_match or symbol_match:
+                    feature_entry = entry
+                    break
+            if isinstance(feature_entry, dict):
+                condition.feature_vector = feature_entry
+                condition.ai_confidence = float(feature_entry.get('strategy_confidence') or 0.0)
+                condition.risk_level = feature_entry.get('risk_level', condition.risk_level)
+                summary = feature_entry.get('strategy_summary') or []
+                if isinstance(summary, list):
+                    condition.strategy_summary = summary
+
+            risk_reports = snapshot.get('risk_reports', []) or []
+            for report in risk_reports:
+                if str(report.get('bot_id')) == str(self.bot_id):
+                    recent_events = report.get('recent_events') or []
+                    if recent_events:
+                        last_event = recent_events[-1]
+                        condition.risk_level = last_event.get('level', condition.risk_level)
+                    break
+        except Exception as exc:
+            self.logger.debug(f"AI enrichment failed: {exc}")
+        return condition
     
     def _calculate_volatility(self, df: pd.DataFrame) -> float:
         """Oblicz zmienność rynku"""
         if len(df) < 20:
             return 0.0
-        
+
         returns = df['close'].pct_change().dropna()
         return float(returns.std() * np.sqrt(24))  # Annualized volatility
+
+    def _normalise_symbol_for_provider(self, pair: str) -> str:
+        if not pair:
+            return 'BTCUSDT'
+        if '/' in pair:
+            base, quote = pair.split('/')
+            return f"{base}{quote}"
+        return pair.replace('-', '').upper()
+
+    async def _fallback_ohlcv_from_provider(self, pair: str) -> List[List[float]]:
+        if self.ai_data_provider is None:
+            return []
+
+        symbol = self._normalise_symbol_for_provider(pair)
+        snapshot = self.latest_ai_snapshot or self.ai_data_provider.get_last_snapshot()
+        candles = []
+        if snapshot and isinstance(snapshot, dict):
+            candles = snapshot.get('candles', {}).get(symbol, [])
+
+        if not candles:
+            try:
+                snapshot = await self.ai_data_provider.manual_refresh([symbol])
+                self.latest_ai_snapshot = snapshot
+                if snapshot:
+                    candles = snapshot.get('candles', {}).get(symbol, [])
+            except Exception as exc:
+                self.logger.debug(f"Fallback OHLCV refresh failed: {exc}")
+                candles = []
+
+        normalized: List[List[float]] = []
+        for candle in candles or []:
+            ts = candle.get('timestamp')
+            if isinstance(ts, str):
+                try:
+                    ts_dt = datetime.fromisoformat(ts)
+                except Exception:
+                    ts_dt = datetime.now()
+            elif isinstance(ts, datetime):
+                ts_dt = ts
+            else:
+                ts_dt = datetime.now()
+
+            normalized.append(
+                [
+                    int(ts_dt.timestamp() * 1000),
+                    float(candle.get('open', 0.0)),
+                    float(candle.get('high', 0.0)),
+                    float(candle.get('low', 0.0)),
+                    float(candle.get('close', 0.0)),
+                    float(candle.get('volume', 0.0)),
+                ]
+            )
+        return normalized
     
     def _calculate_trend_strength(self, df: pd.DataFrame) -> float:
         """Oblicz siłę trendu"""
@@ -779,7 +914,10 @@ class AITradingBot(BaseBot):
         try:
             if not ML_AVAILABLE:
                 return
-            
+
+            if self._sync_training_profile():
+                await self._load_historical_data()
+
             self.logger.info("Rozpoczynam ponowne trenowanie modelu ML...")
             
             # Przygotuj dane treningowe
@@ -853,30 +991,126 @@ class AITradingBot(BaseBot):
         except Exception as e:
             self.logger.error(f"Błąd przygotowania danych treningowych: {e}")
             return np.array([]), np.array([])
+
+    def _resolve_trading_mode(self) -> str:
+        """Określa aktualny tryb handlu na potrzeby profilu uczenia."""
+        try:
+            param_mode = str(self.parameters.get('trading_mode', '')).strip().lower()
+            if param_mode in {"paper", "live"}:
+                return param_mode
+        except Exception:
+            pass
+
+        env_mode = os.environ.get("TRADING_MODE")
+        if env_mode:
+            env_mode = env_mode.strip().lower()
+            if env_mode in {"paper", "live"}:
+                return env_mode
+
+        try:
+            from app.trading_mode_manager import get_trading_mode_manager, TradingMode  # type: ignore
+
+            manager = get_trading_mode_manager()  # type: ignore
+            if manager is not None and hasattr(manager, "get_current_mode"):
+                mode_obj = manager.get_current_mode()
+                if isinstance(mode_obj, str):
+                    candidate = mode_obj.lower()
+                    if candidate in {"paper", "live"}:
+                        return candidate
+                if 'TradingMode' in locals() and isinstance(mode_obj, TradingMode):
+                    candidate = mode_obj.value.lower()
+                    if candidate in {"paper", "live"}:
+                        return candidate
+                if hasattr(mode_obj, "value"):
+                    candidate = str(getattr(mode_obj, "value", "")).lower()
+                    if candidate in {"paper", "live"}:
+                        return candidate
+        except Exception as exc:
+            self.logger.debug("Nie udało się pobrać trybu z TradingModeManager: %s", exc)
+
+        try:
+            config_manager = get_config_manager()
+            config_mode = str(config_manager.get_setting('app', 'trading.mode', 'auto')).lower()
+            if config_mode in {"paper", "live"}:
+                if config_mode == "live" and bool(config_manager.get_setting('trading', 'paper_trading', False)):
+                    return "paper"
+                return config_mode
+            if bool(config_manager.get_setting('trading', 'paper_trading', False)):
+                return "paper"
+        except Exception:
+            pass
+
+        return "paper"
+
+    def _resolve_training_profile(self) -> str:
+        mode = self._resolve_trading_mode()
+        return "live" if mode == "live" else "paper"
+
+    def _sync_training_profile(self, *, initial: bool = False) -> bool:
+        """Aktualizuje profil uczenia w zależności od trybu tradingowego."""
+        profile = self._resolve_training_profile()
+        if profile != self.training_profile:
+            if not initial:
+                self.logger.info(
+                    "Przełączanie profilu uczenia AI z %s na %s", self.training_profile, profile
+                )
+            self.training_profile = profile
+            return True
+        return False
+
+    def _get_training_storage_root(self) -> Path:
+        base_dir = os.environ.get("AI_BOT_STORAGE_DIR", "data/ai_models")
+        path = Path(base_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _get_model_path(self) -> Path:
+        storage = self._get_training_storage_root() / self.training_profile
+        storage.mkdir(parents=True, exist_ok=True)
+        return storage / f"ai_model_{self.bot_id}.pkl"
+
+    def _write_profile_metadata(self, model_path: Path) -> None:
+        metadata = {
+            "bot_id": self.bot_id,
+            "profile": self.training_profile,
+            "trading_mode": self._resolve_trading_mode(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        try:
+            meta_path = model_path.with_suffix(".json")
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            self.logger.debug("Nie udało się zapisać metadanych profilu AI: %s", exc)
     
     async def _save_model(self):
         """Zapisz model ML do pliku"""
         try:
+            if not ML_AVAILABLE or self.ml_model is None:
+                return
+
+            self._sync_training_profile()
+
             model_data = {
                 'model': self.ml_model,
                 'scaler': self.scaler,
                 'feature_columns': self.feature_columns,
                 'last_updated': datetime.now()
             }
-            
-            model_path = f"data/ai_model_{self.bot_id}.pkl"
+
+            model_path = self._get_model_path()
             joblib.dump(model_data, model_path)
-            
+            self._write_profile_metadata(model_path)
+
             self.logger.info(f"Model zapisany: {model_path}")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd zapisywania modelu: {e}")
-    
+
     async def _load_historical_data(self):
         """Załaduj historyczne dane"""
         try:
             # Załaduj model jeśli istnieje
-            model_path = f"data/ai_model_{self.bot_id}.pkl"
+            model_path = self._get_model_path()
             try:
                 model_data = joblib.load(model_path)
                 self.ml_model = model_data['model']
@@ -885,10 +1119,44 @@ class AITradingBot(BaseBot):
                 self.logger.info("Załadowano zapisany model ML")
             except FileNotFoundError:
                 self.logger.info("Brak zapisanego modelu - zostanie utworzony nowy")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania danych historycznych: {e}")
-    
+
+    async def _load_ai_context(self):
+        """Połącz z agregatorem danych AI i pobierz aktualny snapshot."""
+        try:
+            from analytics.ai_bot_data_provider import get_ai_bot_data_provider
+        except Exception as exc:
+            self.logger.debug(f"AI data provider import failed: {exc}")
+            return
+
+        try:
+            from core.integrated_data_manager import get_integrated_data_manager
+            idm = get_integrated_data_manager()
+        except Exception as exc:
+            self.logger.debug(f"Integrated data manager unavailable for AI context: {exc}")
+            idm = None
+
+        try:
+            self.ai_data_provider = get_ai_bot_data_provider(idm)
+            if self.ai_data_provider is None:
+                return
+
+            symbol = self._normalise_symbol_for_provider(self.parameters.get('pair', 'BTC/USDT'))
+            snapshot = self.ai_data_provider.get_last_snapshot()
+            if not snapshot:
+                try:
+                    snapshot = await self.ai_data_provider.manual_refresh([symbol])
+                except Exception as exc:
+                    self.logger.debug(f"AI snapshot refresh failed: {exc}")
+                    snapshot = None
+            self.latest_ai_snapshot = snapshot
+        except Exception as exc:
+            self.logger.debug(f"Unable to attach AI data provider: {exc}")
+            self.ai_data_provider = None
+            self.latest_ai_snapshot = None
+
     async def _initialize_ml_model(self):
         """Inicjalizacja modelu ML"""
         try:

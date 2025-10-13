@@ -1,273 +1,134 @@
-# Centralized PyQt6 stubs for tests
-import sys, types
+import sys
+import types
 import asyncio
+import sqlite3
 import pytest
-from types import SimpleNamespace
+from pathlib import Path
 
-# Do not override real PyQt6 if present
-if "PyQt6" not in sys.modules:
-    mod = types.ModuleType("PyQt6")
-    qtcore = types.ModuleType("PyQt6.QtCore")
-    qtwidgets = types.ModuleType("PyQt6.QtWidgets")
-    qtgui = types.ModuleType("PyQt6.QtGui")
+# Ensure project root is importable when running tests directly
+ROOT_DIR = Path(__file__).resolve().parents[1]
+root_str = str(ROOT_DIR)
+if root_str not in sys.path:
+    sys.path.insert(0, root_str)
 
-    # Core base classes
-    class QObject:
-        def __init__(self, parent=None):
-            self._parent = parent
-    class QWidget(QObject):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-        # Basic QWidget API used by app
-        def setObjectName(self, name): self._object_name = name
-        def setMinimumSize(self, w, h): self._min_size = (w, h)
-        def setMaximumSize(self, w, h): self._max_size = (w, h)
-        def setSizePolicy(self, h, v): self._size_policy = (h, v)
-        def setStyleSheet(self, style): self._style = style
-        def resize(self, w, h): self._size = (w, h)
-        def move(self, x, y): self._pos = (x, y)
-        def screen(self): return SimpleNamespace(availableGeometry=lambda: QRect(0,0,1920,1080))
-    class QMainWindow(QWidget):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-        # Basic QMainWindow API used by app
-        def setWindowTitle(self, title): self._title = title
-        def setCentralWidget(self, widget): self._central = widget
-        def statusBar(self):
-            if not hasattr(self, "_status_bar"):
-                self._status_bar = QStatusBar()
-            return self._status_bar
-        def menuBar(self):
-            if not hasattr(self, "_menu_bar"):
-                self._menu_bar = QMenuBar()
-            return self._menu_bar
-        def setStatusBar(self, bar): self._status_bar = bar
-        def setMenuBar(self, bar): self._menu_bar = bar
+# Teraz możemy importować stub PyQt6
+from utils.pyqt_stubs import install_pyqt_stubs
 
-    class QApplication:
-        _inst = None
-        def __init__(self, args=None):
-            type(self)._inst = self
-        def exec(self): return 0
-        @staticmethod
-        def instance():
-            return QApplication._inst
+# Install PyQt6 stubs if moduł nie jest dostępny (np. brak libGL)
+install_pyqt_stubs()
 
-    # Threading and timers
-    class QThread(QObject):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-        def start(self): pass
-        def wait(self): pass
-        def quit(self): pass
-        def deleteLater(self): pass
-    class QTimer(QObject):
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self.interval = 0
-            # emulate Qt signal attribute like PyQt6
-            self.timeout = SimpleNamespace(connect=lambda f: None)
-        def setInterval(self, i): self.interval = i
-        def start(self): pass
+# Optional dependency shims -------------------------------------------------
 
-    # Signals/slots
-    def pyqtSignal(*args, **kwargs):
-        return SimpleNamespace(connect=lambda *a, **kw: None, emit=lambda *a, **kw: None)
-    def pyqtSlot(*decorator_args, **decorator_kwargs):
-        def decorator(fn): return fn
-        return decorator
+if "aiosqlite" not in sys.modules:
+    try:
+        import aiosqlite  # type: ignore  # pragma: no cover - prefer real dependency
+    except Exception:  # pragma: no cover - dependency unavailable in CI
+        aiosqlite_stub = types.ModuleType("aiosqlite")
 
-    # Common widgets
-    class QTabBar(QObject):
-        def __init__(self):
-            self._visible = True
-            self._min_height = 0
-        def setVisible(self, v): self._visible = bool(v)
-        def setMinimumHeight(self, h): self._min_height = int(h)
-        def setExpanding(self, v): self._expanding = bool(v)
-        def setElideMode(self, mode): self._elide_mode = mode
-        def setAutoHide(self, v): self._auto_hide = bool(v)
-    class QTabWidget(QWidget):
-        class TabPosition:
-            North = 0; South = 1; East = 2; West = 3
-        class TabShape:
-            Rounded = 0; Triangular = 1
-        def __init__(self, parent=None):
-            super().__init__(parent)
-            self._tb = QTabBar()
-            self._tabs = []
-            self._current = 0
-        def setDocumentMode(self, b): self._doc_mode = bool(b)
-        def setTabPosition(self, pos): self._tab_pos = pos
-        def setUsesScrollButtons(self, b): self._uses_scroll = bool(b)
-        def setMovable(self, b): self._movable = bool(b)
-        def setTabShape(self, s): self._shape = s
-        def setTabBarAutoHide(self, b): self._auto_hide = bool(b)
-        def setSizePolicy(self, h, v): self._size_policy = (h, v)
-        def tabBar(self): return self._tb
-        def addTab(self, widget, label):
-            self._tabs.append((widget, label))
-            return len(self._tabs) - 1
-        def count(self): return len(self._tabs)
-        def setCurrentIndex(self, idx):
-            if 0 <= idx < len(self._tabs): self._current = idx
-        def currentIndex(self): return self._current
-        def tabText(self, idx):
-            try:
-                return self._tabs[idx][1]
-            except Exception:
-                return ""
-        def setTabText(self, idx, text):
-            try:
-                w, _ = self._tabs[idx]
-                self._tabs[idx] = (w, text)
-            except Exception:
-                pass
-    class QDockWidget(QWidget): pass
-    class QLabel(QWidget): pass
-    class QPushButton(QWidget): pass
-    class QListWidget(QWidget): pass
-    class QTableWidget(QWidget):
-        def __init__(self, *args, **kwargs): pass
-        def horizontalHeader(self): return QHeaderView()
-    class QTableWidgetItem:
-        def __init__(self, *args, **kwargs): pass
-    class QHeaderView(QObject):
-        class ResizeMode:
-            Fixed = 0
-            Stretch = 1
-        def setSectionResizeMode(self, *args, **kwargs): pass
-    class QComboBox(QWidget): pass
-    class QLineEdit(QWidget): pass
-    class QProgressBar(QWidget): pass
-    class QCheckBox(QWidget): pass
-    class QSpinBox(QWidget): pass
-    class QDoubleSpinBox(QWidget): pass
-    class QSplitter(QWidget): pass
-    class QFrame(QWidget): pass
-    class QGridLayout(QObject):
-        def __init__(self, *args, **kwargs): pass
-        def addWidget(self, *args, **kwargs): pass
-        def addLayout(self, *args, **kwargs): pass
-        def addSpacing(self, *args, **kwargs): pass
-        def addStretch(self, *args, **kwargs): pass
-        def setContentsMargins(self, *args, **kwargs): pass
-        def setAlignment(self, *args, **kwargs): pass
-    class QVBoxLayout(QGridLayout): pass
-    class QHBoxLayout(QGridLayout): pass
-    class QSizePolicy:
-        Expanding = 1; Preferred = 0
-        def __init__(self, *args, **kwargs): pass
-        class Policy:
-            Expanding = 1; Preferred = 0
-    class QMenuBar(QWidget): pass
-    class QAction(QWidget): pass
-    class QStatusBar(QWidget):
-        def __init__(self, *args, **kwargs): pass
-        def showMessage(self, *args, **kwargs): pass
-        def addPermanentWidget(self, *args, **kwargs): pass
-    class QScrollArea(QWidget): pass
-    class QGroupBox(QWidget): pass
-    class QDialog(QWidget): pass
-    class QMessageBox(QWidget): pass
-    class QTreeWidget(QWidget): pass
-    class QTreeWidgetItem:
-        def __init__(self, *args, **kwargs): pass
-    class QFileDialog(QWidget): pass
-    class QColorDialog(QWidget): pass
-    class QMenu(QWidget): pass
-    class QDateEdit(QWidget): pass
-    class QTextEdit(QWidget):
-        def __init__(self, *args, **kwargs): pass
-        def setPlainText(self, *args, **kwargs): pass
-        def toPlainText(self): return ""
-    class QPlainTextEdit(QTextEdit): pass
-    class QTextBrowser(QWidget): pass
-    class QDialogButtonBox(QWidget):
-        Ok = 1; Cancel = 2; Save = 3; Close = 4
-        def __init__(self, *args, **kwargs): pass
-        def accepted(self): return SimpleNamespace(connect=lambda f: None)
-        def rejected(self): return SimpleNamespace(connect=lambda f: None)
-    class QFormLayout(QGridLayout):
-        def __init__(self, *args, **kwargs): pass
-        def addRow(self, *args, **kwargs): pass
+        class Cursor:
+            def __init__(self, cursor: sqlite3.Cursor):
+                self._cursor = cursor
 
-    # QtCore helpers
-    class QDate: pass
-    class QSize: pass
-    class QPoint: pass
-    class QParallelAnimationGroup(QObject):
-        def __init__(self, *args, **kwargs): self._anims=[]
-        def addAnimation(self, anim): self._anims.append(anim)
-        def start(self, *args, **kwargs): pass
-    class Qt:
-        class AlignmentFlag:
-            AlignLeft = 0; AlignRight = 1; AlignCenter = 2
-        class Orientation:
-            Horizontal = 1; Vertical = 2
-        class MouseButton:
-            LeftButton = 1; RightButton = 2
-        class FocusPolicy:
-            NoFocus = 0; StrongFocus = 1
-        class TextElideMode:
-            ElideNone = 0
-    class QRect:
-        def __init__(self, x=0, y=0, w=0, h=0):
-            self._x, self._y, self._w, self._h = x, y, w, h
-        def x(self): return self._x
-        def y(self): return self._y
-        def width(self): return self._w
-        def height(self): return self._h
-    class QEasingCurve:
-        class Type:
-            Linear = 0; InOutQuad = 1
-        def __init__(self, *args, **kwargs): pass
-    class QPropertyAnimation(QObject):
-        def __init__(self, *args, **kwargs): self._start=None; self._end=None
-        def setStartValue(self, v): self._start = v
-        def setEndValue(self, v): self._end = v
-        def start(self): pass
+            @property
+            def lastrowid(self):
+                return self._cursor.lastrowid
 
-    # QtGui stubs
-    class QFont:
-        class Weight:
-            Thin=0; ExtraLight=12; Light=25; Normal=50; Medium=57; DemiBold=63; Bold=75; Black=87
-        def __init__(self, *args, **kwargs): self.pointSize=None; self.bold=False
-        def setPointSize(self, size): self.pointSize = size
-        def setBold(self, is_bold): self.bold = bool(is_bold)
-    class QColor:
-        def __init__(self, *args, **kwargs): self.value = args if args else kwargs
-    class QBrush:
-        def __init__(self, color=None): self.color = color
-    class QIcon:
-        def __init__(self, *args, **kwargs): self.source = args[0] if args else None
-    class QPalette:
-        class ColorRole:
-            Window=0; WindowText=1; Base=2; AlternateBase=3; ToolTipBase=4; ToolTipText=5; Text=6; Button=7; ButtonText=8; BrightText=9; Highlight=10; HighlightedText=11
-        def __init__(self): self.colors = {}
-        def setColor(self, role, color): self.colors[role] = color
-    class QPixmap:
-        def __init__(self, *args, **kwargs): self.source = args[0] if args else None
-    class QSyntaxHighlighter:
-        def __init__(self, *args, **kwargs): self.document = args[0] if args else None
-        def setDocument(self, doc): self.document = doc
-    class QTextDocument: pass
-    class QPainter: pass
-    class QPen: pass
-    class QContextMenuEvent: pass
+            async def fetchone(self):
+                return await asyncio.to_thread(self._cursor.fetchone)
 
-    # Export classes to Qt modules
-    qtcore.QObject=QObject; qtcore.QTimer=QTimer
-    qtcore.QThread=QThread; qtcore.pyqtSignal=pyqtSignal; qtcore.pyqtSlot=pyqtSlot
-    qtcore.QDate=QDate; qtcore.QSize=QSize; qtcore.QPoint=QPoint; qtcore.QParallelAnimationGroup=QParallelAnimationGroup
-    qtcore.Qt=Qt; qtcore.QRect=QRect; qtcore.QPropertyAnimation=QPropertyAnimation; qtcore.QEasingCurve=QEasingCurve
-    for name, cls in list(locals().items()):
-        if name in ["QTabWidget","QDockWidget","QLabel","QPushButton","QListWidget","QTableWidget","QTableWidgetItem","QComboBox","QLineEdit","QProgressBar","QCheckBox","QSpinBox","QDoubleSpinBox","QSplitter","QFrame","QVBoxLayout","QHBoxLayout","QGridLayout","QWidget","QMainWindow","QApplication","QSizePolicy","QMenuBar","QAction","QStatusBar","QScrollArea","QGroupBox","QHeaderView","QDialog","QMessageBox","QTreeWidget","QTreeWidgetItem","QFileDialog","QColorDialog","QFormLayout","QTextEdit","QPlainTextEdit","QTextBrowser","QDialogButtonBox","QMenu","QDateEdit"]:
-            setattr(qtwidgets, name, cls)
-    for name, cls in list(locals().items()):
-        if name in ["QFont","QBrush","QColor","QIcon","QPalette","QPixmap","QSyntaxHighlighter","QTextDocument","QPainter","QPen","QContextMenuEvent"]:
-            setattr(qtgui, name, cls)
-    sys.modules["PyQt6"]=mod; sys.modules["PyQt6.QtCore"]=qtcore; sys.modules["PyQt6.QtWidgets"]=qtwidgets; sys.modules["PyQt6.QtGui"]=qtgui
+            async def fetchall(self):
+                return await asyncio.to_thread(self._cursor.fetchall)
+
+            async def fetchmany(self, size=None):
+                if size is None:
+                    return await asyncio.to_thread(self._cursor.fetchmany)
+                return await asyncio.to_thread(self._cursor.fetchmany, size)
+
+            async def close(self):
+                await asyncio.to_thread(self._cursor.close)
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                row = await self.fetchone()
+                if row is None:
+                    raise StopAsyncIteration
+                return row
+
+        class Connection:
+            def __init__(self, connection: sqlite3.Connection):
+                self._connection = connection
+
+            @property
+            def row_factory(self):
+                return self._connection.row_factory
+
+            @row_factory.setter
+            def row_factory(self, factory):
+                self._connection.row_factory = factory
+
+            async def execute(self, sql, parameters=None):
+                params = parameters if parameters is not None else ()
+
+                def _exec():
+                    cur = self._connection.execute(sql, tuple(params))
+                    return Cursor(cur)
+
+                return await asyncio.to_thread(_exec)
+
+            async def commit(self):
+                await asyncio.to_thread(self._connection.commit)
+
+            async def close(self):
+                await asyncio.to_thread(self._connection.close)
+
+        async def connect(path, **kwargs):
+            def _connect():
+                conn = sqlite3.connect(path, check_same_thread=False, **kwargs)
+                return Connection(conn)
+
+            return await asyncio.to_thread(_connect)
+
+        aiosqlite_stub.connect = connect
+        aiosqlite_stub.Connection = Connection
+        aiosqlite_stub.Cursor = Cursor
+        sys.modules["aiosqlite"] = aiosqlite_stub
+
+if "websockets" not in sys.modules:
+    try:
+        import websockets  # type: ignore  # pragma: no cover - prefer real dependency
+    except Exception:  # pragma: no cover - dependency unavailable in CI
+        websockets_stub = types.ModuleType("websockets")
+
+        class _ConnectionClosed(Exception):
+            pass
+
+        class exceptions:  # pragma: no cover - attribute namespace
+            ConnectionClosed = _ConnectionClosed
+
+        class FakeWebSocket:
+            def __init__(self):
+                self._queue: asyncio.Queue[str] = asyncio.Queue()
+
+            async def send(self, message: str) -> None:  # pragma: no cover - trivial
+                await asyncio.sleep(0)
+
+            async def recv(self) -> str:  # pragma: no cover - trivial
+                return await self._queue.get()
+
+            async def close(self) -> None:  # pragma: no cover - trivial
+                await asyncio.sleep(0)
+
+        async def connect(*args, **kwargs):
+            raise _ConnectionClosed(
+                "websockets.connect is unavailable in the lightweight test environment"
+            )
+
+        websockets_stub.connect = connect
+        websockets_stub.exceptions = exceptions
+        websockets_stub.FakeWebSocket = FakeWebSocket
+        sys.modules["websockets"] = websockets_stub
 
 @pytest.fixture(autouse=True)
 def ensure_event_loop():

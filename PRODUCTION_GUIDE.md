@@ -33,6 +33,29 @@ python test_api_interface.py
 
 Upewnij się, że wszystkie testy przechodzą pomyślnie.
 
+### 3. Kontrola zależności runtime
+```bash
+python tools/check_runtime_dependencies.py
+```
+
+Skrypt zapisze raport `runtime_dependency_report.json` oraz wypisze brakujące moduły Python i biblioteki systemowe (np. `libGL`).
+Zainstaluj brakujące elementy **przed** wdrożeniem release candidate.
+
+**Nowość:** pełną checklistę produkcyjną uruchomisz jednym poleceniem:
+
+```bash
+python ops/release_checklist.py --output build/release_report.json
+```
+
+Raport JSON zawiera wynik testów, smoke testy oraz kontrolę zależności – dołącz go do procesu release'owego lub audytu.
+
+### 4. Walidacja konfiguracji handlu i ryzyka
+```bash
+python tools/check_distribution_readiness.py
+```
+
+Skrypt zwraca status trybu handlu (paper/live), kompletność kluczy API oraz poprawność limitów ryzyka. Wykonaj go przed publikacją release candidate, aby potwierdzić, że panel ustawień i RiskManager są zsynchronizowane.
+
 ## 🔑 Konfiguracja kluczy API {#konfiguracja-api}
 
 ### Binance
@@ -115,7 +138,7 @@ Upewnij się, że wszystkie testy przechodzą pomyślnie.
 
 2. **Skonfiguruj klucze API** (będą zaszyfrowane automatycznie):
    - Użyj interfejsu graficznego do dodania kluczy
-   - Lub edytuj bezpośrednio zaszyfrowany plik api_config.json
+   - Lub uzupełnij plik `config/exchange_credentials.json` (pozostawienie pustych pól spowoduje odczyt zmiennych środowiskowych `BINANCE_API_KEY`, `BYBIT_API_KEY` itd.)
 
 ## 📊 Monitoring i bezpieczeństwo {#monitoring}
 
@@ -126,15 +149,31 @@ Upewnij się, że wszystkie testy przechodzą pomyślnie.
 - ⚫ **Wyłączona**: Giełda nieaktywna
 - ❌ **Błąd**: Problem z konfiguracją
 
+### Limity zapytań API
+- TradingEngine publikuje zdarzenia `rate.limit.warning` i `rate.limit.blocked` w EventBusie.
+- Konfigurację limitów (globalnych i per-symbol) można zmieniać w sekcji `trading.rate_limiting` pliku `config/app_config.json`.
+- Widgety lub integracje mogą odpytywać metodę `TradingEngine.get_rate_limit_snapshot()` w celu wizualizacji wykorzystania limitów.
+- RiskManager publikuje zdarzenia `risk.alert` oraz `risk.escalation`; podepnij integracje (np. Slack, PagerDuty), aby eskalować krytyczne przekroczenia limitów.
+
 ### Automatyczne sprawdzanie
 Aplikacja automatycznie:
 - Sprawdza połączenia co 30 sekund
 - Loguje wszystkie operacje
 - Wysyła powiadomienia o problemach
 - Zatrzymuje handel w przypadku błędów
+- W trybie produkcyjnym ustaw `ENABLE_REAL_MARKET_DATA=1`, aby MarketDataManager automatycznie uruchomił streaming Binance (REST + WebSocket) i aktualizował cache w czasie rzeczywistym.
 
 ### Ręczne odświeżanie
 Kliknij przycisk "🔄 Odśwież Status" aby natychmiast sprawdzić wszystkie połączenia.
+
+### Budowa paczek UI
+Do dystrybucji desktopowej użyj skryptu pomocniczego opartego na PyInstallerze:
+
+```bash
+python tools/build_ui_bundle.py dist/CryptoBotDesktop --onefile --clean
+```
+
+Polecenie stworzy katalog `dist/` z binarką oraz posprząta artefakty (`build/`, `spec/`).
 
 ## 🔧 Rozwiązywanie problemów {#problemy}
 

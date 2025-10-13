@@ -4,7 +4,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict, is_dataclass
 
 from .data_manager import DataManager, PortfolioData, BotData, RiskMetrics, LogEntry, AlertEntry, get_data_manager
 from .portfolio_manager import PortfolioManager, PortfolioSummary
@@ -80,7 +80,8 @@ class IntegratedDataManager:
             'transaction_update': [],  # Dodany callback dla transakcji
             'bot_created': [],         # Dodany callback dla nowych botów
             'bot_deleted': [],         # Dodany callback dla usuniętych botów
-            'trade_update': []         # Dodany callback dla transakcji
+            'trade_update': [],        # Dodany callback dla transakcji
+            'ai_snapshot': [],         # Aktualizacje panelu AI / dashboardu
         }
         
         # Cache i stan
@@ -100,6 +101,8 @@ class IntegratedDataManager:
         # Track background asyncio tasks for clean shutdown
         self._portfolio_task = None
         self._system_status_task = None
+        self._ai_snapshot_task = None
+        self._ai_data_provider = None
         
         # Flaga trybu produkcyjnego (z ConfigManager z fallbackiem do ENV)
         try:
@@ -182,7 +185,16 @@ class IntegratedDataManager:
             loop = get_or_create_event_loop()
             self._portfolio_task = schedule_coro_safely(lambda: self._portfolio_update_loop())
             self._system_status_task = schedule_coro_safely(lambda: self._system_status_update_loop())
-            
+
+            # Uruchom agregator danych AI (rynek + ryzyko + strategie)
+            provider = self._ensure_ai_provider()
+            if provider:
+                provider.start_background_updates(interval=5.0)
+                try:
+                    await provider.manual_refresh()
+                except Exception as exc:
+                    logger.debug("Initial AI snapshot refresh failed: %s", exc)
+
             self.initialized = True
             logger.info("IntegratedDataManager fully initialized")
             
@@ -197,12 +209,16 @@ class IntegratedDataManager:
         """Uruchamia pętle aktualizacji danych"""
         try:
             logger.info("Starting data update loops...")
-            
+
             # Uruchom pętle w tle
             loop = get_or_create_event_loop()
             self._portfolio_task = schedule_coro_safely(lambda: self._portfolio_update_loop())
             self._system_status_task = schedule_coro_safely(lambda: self._system_status_update_loop())
-            
+
+            provider = self._ensure_ai_provider()
+            if provider:
+                provider.start_background_updates(interval=5.0)
+
             logger.info("Data update loops started successfully")
             
         except Exception as e:
@@ -238,6 +254,10 @@ class IntegratedDataManager:
             # Wyczyść referencje
             self._portfolio_task = None
             self._system_status_task = None
+            try:
+                await self.stop_ai_snapshot_updates()
+            except Exception as exc:
+                logger.warning(f"Error stopping AI snapshot updates: {exc}")
         except Exception as e:
             logger.error(f"Error stopping data loops: {e}")
 
@@ -251,8 +271,52 @@ class IntegratedDataManager:
                     await self.market_data_manager.stop()
             except Exception as e:
                 logger.warning(f"Error stopping MarketDataManager: {e}")
+            try:
+                await self.stop_ai_snapshot_updates()
+            except Exception as exc:
+                logger.debug("AI snapshot shutdown warning: %s", exc)
         except Exception as e:
             logger.error(f"Error during IntegratedDataManager shutdown: {e}")
+
+    def _ensure_ai_provider(self):
+        if self._ai_data_provider is None:
+            try:
+                from analytics.ai_bot_data_provider import get_ai_bot_data_provider
+
+                self._ai_data_provider = get_ai_bot_data_provider(self)
+            except Exception as exc:
+                logger.warning(f"Unable to initialize AI data provider: {exc}")
+                self._ai_data_provider = None
+
+        if self._ai_data_provider is not None:
+            try:
+                self._ai_data_provider.attach_integrated_manager(self)
+                if self.market_data_manager:
+                    self._ai_data_provider.set_market_data_manager(self.market_data_manager)
+                if self.risk_manager:
+                    self._ai_data_provider.set_risk_manager(self.risk_manager)
+            except Exception as exc:
+                logger.debug("Updating AI data provider references failed: %s", exc)
+        return self._ai_data_provider
+
+    async def refresh_ai_snapshot(self, symbols: Optional[List[str]] = None):
+        provider = self._ensure_ai_provider()
+        if provider is None:
+            logger.debug("refresh_ai_snapshot called but provider unavailable")
+            return None
+        return await provider.manual_refresh(symbols)
+
+    async def stop_ai_snapshot_updates(self):
+        provider = self._ai_data_provider
+        if provider is None:
+            return
+        try:
+            await provider.stop_background_updates()
+        finally:
+            self._ai_snapshot_task = None
+
+    def get_ai_data_provider(self):
+        return self._ensure_ai_provider()
     
     # === METODY DLA UI WIDGETS ===
     
@@ -574,11 +638,16 @@ class IntegratedDataManager:
     async def get_strategy_state(self, bot_id: str) -> Optional[Dict[str, Any]]:
         """Pobierz stan strategii"""
         try:
-            return await self.strategy_engine.get_strategy_state(bot_id)
+            if not self.strategy_engine:
+                return None
+            state = self.strategy_engine.get_strategy_state(bot_id)
+            if state is None:
+                return None
+            return self._serialise_strategy_state(bot_id, state)
         except Exception as e:
             logger.error(f"Błąd pobierania stanu strategii dla bota {bot_id}: {e}")
             return None
-    
+
     async def update_strategy_config(self, bot_id: str, config: StrategyConfig) -> bool:
         """Zaktualizuj konfigurację strategii"""
         try:
@@ -586,7 +655,56 @@ class IntegratedDataManager:
         except Exception as e:
             logger.error(f"Błąd aktualizacji konfiguracji strategii dla bota {bot_id}: {e}")
             return False
-    
+
+    def get_strategy_catalog(self) -> List[Dict[str, Any]]:
+        """Zwraca opis wszystkich strategii wraz ze stanem."""
+        try:
+            if self.strategy_engine and hasattr(self.strategy_engine, "describe_strategies"):
+                return self.strategy_engine.describe_strategies()
+        except Exception as exc:
+            logger.debug("describe_strategies failed: %s", exc)
+        return []
+
+    def _serialise_strategy_state(self, bot_id: str, state: Any) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "bot_id": bot_id,
+            "current_position": getattr(state, "current_position", None),
+            "total_invested": getattr(state, "total_invested", None),
+            "total_profit": getattr(state, "total_profit", None),
+            "metadata": getattr(state, "metadata", {}),
+            "active": getattr(state, "active", None),
+        }
+        last_update = getattr(state, "last_update", None)
+        if isinstance(last_update, datetime):
+            payload["last_update"] = last_update.isoformat()
+        else:
+            payload["last_update"] = last_update
+        last_signal = getattr(state, "last_signal", None)
+        if last_signal is not None:
+            payload["last_signal"] = self._serialise_trading_signal(last_signal)
+        return payload
+
+    def _serialise_trading_signal(self, signal: Any) -> Dict[str, Any]:
+        if is_dataclass(signal):
+            data = asdict(signal)
+        elif isinstance(signal, dict):
+            data = dict(signal)
+        elif hasattr(signal, "to_dict"):
+            data = signal.to_dict()
+        else:
+            data = {
+                "symbol": getattr(signal, "symbol", None),
+                "signal_type": getattr(signal, "signal_type", None),
+                "price": getattr(signal, "price", None),
+                "quantity": getattr(signal, "quantity", None),
+                "confidence": getattr(signal, "confidence", None),
+                "reason": getattr(signal, "reason", None),
+            }
+        timestamp = data.get("timestamp")
+        if isinstance(timestamp, datetime):
+            data["timestamp"] = timestamp.isoformat()
+        return data
+
     # === METODY DLA USTAWIEŃ ===
     
     async def update_risk_settings(self, settings: Dict[str, Any]):

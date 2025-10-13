@@ -9,11 +9,17 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
-import pandas as pd
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
+import pandas as pd
+
+
+logger = logging.getLogger(__name__)
 
 try:
     import ccxt
@@ -21,12 +27,7 @@ try:
     CCXT_AVAILABLE = True
 except ImportError:
     CCXT_AVAILABLE = False
-logger.info("CCXT not available - trading engines will use simulation mode")
-
-from dataclasses import dataclass
-from enum import Enum
-import logging
-logger = logging.getLogger(__name__)
+    logger.info("CCXT not available - trading engines will use simulation mode")
 
 
 class OrderType(Enum):
@@ -211,18 +212,17 @@ class ExchangeConnector:
                 'side': order.side.value,
                 'amount': order.amount,
             }
-            
+
             if order.price:
                 order_params['price'] = order.price
-            pass
-            
+
             result = await self.async_exchange.create_order(**order_params)
-            
+
             order.exchange_id = result['id']
             order.status = OrderStatus.OPEN
             logger.info(f"✅ Zlecenie złożone: {result['id']}")
             return order
-            
+
         except Exception as e:
             logger.info(f"❌ Błąd składania zlecenia: {e}")
             order.status = OrderStatus.REJECTED
@@ -464,7 +464,6 @@ class TradingBot:
         self.logger.info(f"🛑 Zatrzymywanie bota {self.name}")
     
     async def trading_cycle(self):
-            pass
         """Jeden cykl handlowy"""
         # 1. Pobierz dane rynkowe
         market_data = await self.get_market_data()
@@ -503,33 +502,34 @@ class TradingBot:
                 return df
             else:
                 # Symulacja danych
-                dates = pd.date_range(start=datetime.now() - timedelta(hours=2), 
-                                    end=datetime.now(), freq='1min')[:100]
-                
-                base_price = 45000
-                prices = []
+                dates = pd.date_range(
+                    start=datetime.now() - timedelta(hours=2),
+                    end=datetime.now(),
+                    freq='1min',
+                )[:100]
+
+                base_price = 45000.0
+                prices: List[float] = []
                 current_price = base_price
-                
+
                 for _ in range(len(dates)):
                     change = np.random.normal(0, 0.001)
-                    current_price *= (1 + change)
+                    current_price *= 1 + change
                     prices.append(current_price)
-                pass
-                
-                    pass
-                data = []
-                for i, price in enumerate(prices):
+
+                data: List[List[float]] = []
+                for price in prices:
                     open_price = price
                     high_price = price * (1 + abs(np.random.normal(0, 0.0005)))
                     low_price = price * (1 - abs(np.random.normal(0, 0.0005)))
                     close_price = price * (1 + np.random.normal(0, 0.0002))
-                    volume = np.random.uniform(10, 100)
-                    
+                    volume = float(np.random.uniform(10, 100))
+
                     data.append([open_price, high_price, low_price, close_price, volume])
-                
+
                 df = pd.DataFrame(data, columns=['open', 'high', 'low', 'close', 'volume'], index=dates)
                 return df
-                
+
         except Exception as e:
             self.logger.error(f"Błąd pobierania danych rynkowych: {e}")
             return pd.DataFrame()
@@ -537,13 +537,10 @@ class TradingBot:
     async def update_balance(self):
         """Aktualizuje saldo"""
         self.balance = await self.exchange.get_balance()
-            pass
-    
+
     async def check_orders(self):
-                pass
         """Sprawdza status otwartych zleceń"""
-            pass
-        for order in self.orders:
+        for order in list(self.orders):
             if order.status == OrderStatus.OPEN:
                 status = await self.exchange.get_order_status(order.exchange_id, order.symbol)
                 if status.get('status') == 'filled':
@@ -558,11 +555,9 @@ class TradingBot:
         if not await self.check_balance_for_order(order):
             self.logger.warning(f"Niewystarczające saldo dla zlecenia: {order.id}")
             return
-                pass
-        
+
         # Składaj zlecenie
         executed_order = await self.exchange.place_order(order)
-                    pass
         self.orders.append(executed_order)
         
         self.logger.info(f"📋 Zlecenie złożone: {executed_order.side.value} {executed_order.amount} {executed_order.symbol}")
@@ -613,10 +608,9 @@ class TradingBot:
         
         await self.execute_order(order)
         self.positions.remove(position)
-        
+
         self.logger.info(f"🔒 Pozycja zamknięta: {reason}")
-            pass
-    
+
     async def log_status(self, analysis: Dict[str, Any]):
         """Loguje status bota"""
         signal = analysis.get('signal', 'hold')
@@ -625,15 +619,13 @@ class TradingBot:
         self.logger.info(f"📊 Status: {signal} | Cena: {current_price:.2f} | Pozycje: {len(self.positions)} | PnL: {self.pnl:.2f}")
 
 
-            pass
 class BotManager:
     """Menedżer botów handlowych"""
     
     def __init__(self):
         self.bots = {}
         self.is_running = False
-    
-            pass
+
     def add_bot(self, bot: TradingBot):
         """Dodaje bota do managera"""
         self.bots[bot.name] = bot

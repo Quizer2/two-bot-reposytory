@@ -4,13 +4,20 @@ import hashlib
 import secrets
 import asyncio
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from pathlib import Path
-import aiosqlite
 import logging
 from utils.db_migrations import apply_migrations
 from utils.db_utils import validate_identifiers, build_where_clause, build_set_clause
 logger = logging.getLogger(__name__)
+
+try:  # pragma: no cover - zależne od środowiska uruchomieniowego
+    import aiosqlite  # type: ignore
+except Exception as exc:  # pragma: no cover - fallback do stubu
+    logger.warning("aiosqlite unavailable (%s) – installing async stub", exc)
+    from utils.async_sqlite_stub import install_aiosqlite_stub
+
+    aiosqlite = install_aiosqlite_stub()
 
 # Stałe whitelist kolumn dla dynamicznych zapytań SQL
 RISK_LIMITS_ALLOWED_COLUMNS = {
@@ -32,8 +39,18 @@ POSITIONS_ALLOWED_COLUMNS = {
 }
 
 class DatabaseManager:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, db_path: Union[str, Path] = "data/database.db"):
+        # Normalizuj ścieżkę tak, aby obsługiwała zarówno Path jak i str
+        if isinstance(db_path, Path):
+            resolved_path = db_path
+        else:
+            resolved_path = Path(db_path)
+
+        # aiosqlite obsługuje specjalną wartość ":memory:" – nie tworzymy wtedy katalogów
+        if str(resolved_path) != ":memory":
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self.db_path = str(resolved_path)
         self._conn = None
 
     async def get_connection(self):

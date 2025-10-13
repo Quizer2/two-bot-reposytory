@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import inspect
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 from datetime import datetime
@@ -50,27 +51,47 @@ def schedule_coro_safely(coro_or_factory: "asyncio.coroutines" , run_in_thread_i
     This avoids 'coroutine was never awaited' warnings in sync contexts (e.g., tests).
     """
     def _get_coro():
-        try:
-            if callable(coro_or_factory) and not inspect.iscoroutine(coro_or_factory):
-                return coro_or_factory()
-            return coro_or_factory
-        except Exception:
-            return coro_or_factory
+        if callable(coro_or_factory) and not inspect.iscoroutine(coro_or_factory):
+            return coro_or_factory()
+        return coro_or_factory
     try:
         loop = asyncio.get_running_loop()
         coro = _get_coro()
+        if not inspect.iscoroutine(coro):
+            async def _async_wrapper():
+                return coro
+
+            coro = _async_wrapper()
         return loop.create_task(coro)
     except RuntimeError:
         # No running loop
         if run_in_thread_if_no_loop:
             import threading as _th
-            _th.Thread(target=lambda: asyncio.run(_get_coro()), daemon=True).start()
+            def _runner():
+                coro = _get_coro()
+                if not inspect.iscoroutine(coro):
+                    async def _async_wrapper():
+                        return coro
+
+                    coro = _async_wrapper()
+                asyncio.run(coro)
+
+            _th.Thread(target=_runner, daemon=True).start()
         return None
     except Exception:
         # Defensive: if anything unexpected happens, fall back to thread run to avoid dropped coroutines
         try:
             import threading as _th
-            _th.Thread(target=lambda: asyncio.run(_get_coro()), daemon=True).start()
+            def _runner():
+                coro = _get_coro()
+                if not inspect.iscoroutine(coro):
+                    async def _async_wrapper():
+                        return coro
+
+                    coro = _async_wrapper()
+                asyncio.run(coro)
+
+            _th.Thread(target=_runner, daemon=True).start()
         except Exception:
             pass
         return None
