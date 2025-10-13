@@ -128,7 +128,7 @@ logger.info(f"❌ Błąd inicjalizacji komponentów: {e}")
             traceback.print_exc()
             return False
 
-    # ==================== TEST 1: INTERFEJS UŻYTKOWNIKA ====================
+    # == == == == == == == == == == TEST 1: INTERFEJS UŻYTKOWNIKA == == == == == == == == == ==
     
     async def test_ui_navigation(self):
             pass
@@ -228,7 +228,7 @@ logger.info(f"❌ Błąd testu przycisków i formularzy: {e}")
         self.total_tests += 1
 
                 pass
-    # ==================== TEST 2: INTEGRACJE Z GIEŁDAMI ====================
+    # == == == == == == == == == == TEST 2: INTEGRACJE Z GIEŁDAMI == == == == == == == == == ==
                     pass
     
     async def test_api_authorization(self):
@@ -426,7 +426,7 @@ logger.info(f"❌ Błąd testu zarządzania zleceniami: {e}")
                     pass
         self.total_tests += 1
 
-    # ==================== TEST 3: BOTY (BOTMANAGER) ====================
+    # == == == == == == == == == == TEST 3: BOTY (BOTMANAGER) == == == == == == == == == ==
     
     async def test_bot_creation_and_management(self):
         """Test 3.1: Tworzenie i zarządzanie botami"""
@@ -568,7 +568,7 @@ logger.info(f"❌ Błąd testu strategii botów: {e}")
                     pass
         self.total_tests += 1
 
-    # ==================== TEST 4: ZARZĄDZANIE RYZYKIEM ====================
+    # == == == == == == == == == == TEST 4: ZARZĄDZANIE RYZYKIEM == == == == == == == == == ==
     
     async def test_risk_management(self):
         """Test 4: Zarządzanie ryzykiem"""
@@ -661,7 +661,7 @@ logger.info(f"❌ Błąd testu zarządzania ryzykiem: {e}")
                     pass
         self.total_tests += 1
 
-    # ==================== TEST 5: BAZA DANYCH I KONFIGURACJA ====================
+    # == == == == == == == == == == TEST 5: BAZA DANYCH I KONFIGURACJA == == == == == == == == == ==
     
     async def test_database_and_config(self):
         """Test 5: Baza danych i konfiguracja"""
@@ -733,7 +733,7 @@ logger.info(f"❌ Błąd testu bazy danych i konfiguracji: {e}")
             pass
         self.total_tests += 1
 
-    # ==================== TEST 6: ANALIZA I RAPORTY ====================
+    # == == == == == == == == == == TEST 6: ANALIZA I RAPORTY == == == == == == == == == ==
     
     async def test_analysis_and_reports(self):
         """Test 6: Analiza i raporty"""
@@ -793,7 +793,7 @@ logger.info(f"❌ Błąd testu analizy i raportów: {e}")
         self.total_tests += 1
 
                 pass
-    # ==================== TEST 7: POWIADOMIENIA ====================
+    # == == == == == == == == == == TEST 7: POWIADOMIENIA == == == == == == == == == ==
     
     async def test_notifications(self):
             pass
@@ -868,7 +868,7 @@ logger.info(f"❌ Błąd testu powiadomień: {e}")
         self.total_tests += 1
 
             pass
-    # ==================== TEST 8: TRYBY DZIAŁANIA ====================
+    # == == == == == == == == == == TEST 8: TRYBY DZIAŁANIA == == == == == == == == == ==
     
     async def test_trading_modes(self):
         """Test 8: Tryby działania"""
@@ -942,7 +942,7 @@ logger.info(f"❌ Błąd testu trybów działania: {e}")
         
         self.total_tests += 1
 
-    # ==================== TEST 9: WYDAJNOŚĆ ====================
+    # == == == == == == == == == == TEST 9: WYDAJNOŚĆ == == == == == == == == == ==
     
     async def test_performance(self):
             pass
@@ -1008,7 +1008,7 @@ logger.info(f"❌ Błąd testu wydajności: {e}")
             pass
         self.total_tests += 1
 
-    # ==================== TEST 10: BEZPIECZEŃSTWO ====================
+    # == == == == == == == == == == TEST 10: BEZPIECZEŃSTWO == == == == == == == == == ==
     
     async def test_security(self):
         """Test 10: Bezpieczeństwo"""
@@ -1069,7 +1069,7 @@ logger.info(f"❌ Błąd testu bezpieczeństwa: {e}")
         
         self.total_tests += 1
 
-    # ==================== URUCHOMIENIE WSZYSTKICH TESTÓW ====================
+    # == == == == == == == == == == URUCHOMIENIE WSZYSTKICH TESTÓW == == == == == == == == == ==
     
     async def run_all_tests(self):
         """Uruchomienie wszystkich testów"""

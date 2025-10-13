@@ -5,10 +5,10 @@ REM Autor: CryptoBotDesktop Team
 title CryptoBotDesktop v1.0.0
 
 echo.
-echo ========================================
+echo == == == == == == == == == == == == == == == == == == ==
 echo   CryptoBotDesktop v1.0.0
 echo   Zaawansowany bot do handlu crypto
-echo ========================================
+echo == == == == == == == == == == == == == == == == == == ==
 echo.
 
 REM Sprawdzenie czy Python jest zainstalowany
@@ -81,7 +81,7 @@ if not exist "config" mkdir config
 
 echo Uruchamianie CryptoBotDesktop...
 echo.
-echo ========================================
+echo == == == == == == == == == == == == == == == == == == ==
 echo.
 
 REM Uruchomienie aplikacji
@@ -90,18 +90,18 @@ python main.py
 REM Sprawdzenie kodu wyjścia
 if errorlevel 1 (
     echo.
-    echo ========================================
+    echo == == == == == == == == == == == == == == == == == == ==
     echo BLAD: Aplikacja zakonczyla sie z bledem!
     echo Sprawdz logi w katalogu data\logs\
-    echo ========================================
+    echo == == == == == == == == == == == == == == == == == == ==
     echo.
     pause
     exit /b 1
 )
 
 echo.
-echo ========================================
+echo == == == == == == == == == == == == == == == == == == ==
 echo Aplikacja zakonczona pomyslnie.
-echo ========================================
+echo == == == == == == == == == == == == == == == == == == ==
 echo.
 pause

@@ -6,11 +6,10 @@ import threading
 from functools import wraps
 from typing import Callable, Dict, Tuple
 import logging
-import yaml
 from pathlib import Path
 from .rate_limit import TokenBucket
-import yaml
 from .circuit_breaker import CircuitBreaker
+from .yaml_loader import safe_load
 import inspect
 import asyncio
 
@@ -20,7 +19,7 @@ def _resolve_endpoint_from_fn(exch: str, fn: str) -> tuple[str,str]:
     # returns (method, path) or ('NA', fn)
     try:
         cfg_path = Path(__file__).resolve().parents[1] / "config" / "endpoint_map.yaml"
-        data = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        data = safe_load(cfg_path.read_text(encoding="utf-8")) or {}
         ex = (data.get("exchanges") or {}).get(exch.lower()) or {}
         mp = ex.get(fn)
         if mp and mp.get("method") and mp.get("path"):
@@ -37,7 +36,7 @@ def _load_limits():
     cfg_path = Path(__file__).resolve().parents[1] / "config" / "rate_limits.yaml"
     if not cfg_path.exists():
         return {}
-    return yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    return safe_load(cfg_path.read_text(encoding="utf-8")) or {}
 
 def get_guard(name: str) -> Tuple[TokenBucket, CircuitBreaker]:
     # name may be 'exchange:op' or 'exchange:rest:/api/v3/order'

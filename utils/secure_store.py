@@ -21,6 +21,14 @@ def load_all() -> dict:
 def save_all(data: dict) -> None:
     SEC_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
+
+def delete_secret(name: str) -> None:
+    """Remove a secret entry from the secure store if it exists."""
+    data = load_all()
+    if name in data:
+        del data[name]
+        save_all(data)
+
 def put_secret(name: str, value: str, master_password: str) -> None:
     f = get_fernet(master_password)
     token = f.encrypt(value.encode("utf-8")).decode("utf-8")

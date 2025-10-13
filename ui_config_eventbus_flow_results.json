@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-09-30T20:23:47.937561",
+  "timestamp": "2025-10-13T19:00:36.342931",
   "test_type": "UI → ConfigManager → EventBus Flow",
   "results": [
     {
@@ -30,174 +30,7 @@
   ],
   "events_received": [
     {
-      "timestamp": "2025-09-30T20:23:47.631259",
-      "event_type": "CONFIG_UPDATED",
-      "data": {
-        "config_type": "app",
-        "old_config": {
-          "app": {
-            "name": "CryptoBotDesktop",
-            "version": "1.0.0",
-            "debug": false,
-            "auto_start_bots": false,
-            "auto_restart_bots": true,
-            "offline_mode": false,
-            "language": "pl",
-            "timezone": "Europe/Warsaw"
-          },
-          "database": {
-            "path": "data/database.db",
-            "backup_interval_hours": 24,
-            "max_backups": 7,
-            "auto_backup": true,
-            "backup_path": "data/backup"
-          },
-          "logging": {
-            "level": "INFO",
-            "max_file_size_mb": 10,
-            "max_files": 5,
-            "log_to_console": true,
-            "log_to_file": true,
-            "log_to_database": true,
-            "cleanup_days": 30
-          },
-          "security": {
-            "session_timeout_minutes": 60,
-            "max_login_attempts": 5,
-            "lockout_duration_minutes": 15,
-            "require_password_change_days": 90,
-            "min_password_length": 8,
-            "encryption_algorithm": "AES-256",
-            "auto_lock_minutes": 30
-          },
-          "exchanges": {
-            "default": "binance",
-            "available": [
-              "binance",
-              "bybit",
-              "kucoin",
-              "coinbase",
-              "kraken",
-              "bitfinex"
-            ]
-          },
-          "trading": {
-            "default_quote_currency": "USDT",
-            "min_order_amount": 10.0,
-            "max_order_amount": 10000.0,
-            "default_stop_loss_percent": 5.0,
-            "default_take_profit_percent": 10.0,
-            "max_open_positions": 10,
-            "paper_trading": false,
-            "slippage_tolerance_percent": 0.5,
-            "enabled": true,
-            "mode": "live",
-            "default_exchange": "coinbase",
-            "updated_at": "2025-09-30T20:19:47.662321"
-          },
-          "test_section": {
-            "test_value": "test_data",
-            "updated_at": "2025-09-30T20:19:47.663861"
-          },
-          "risk_management": {
-            "max_daily_loss": 1.0,
-            "max_position_size": 1000.0,
-            "max_drawdown": 5.0,
-            "default_stop_loss": 1.5,
-            "default_take_profit": 3.0,
-            "max_open_positions": 5,
-            "risk_per_trade": 1.0,
-            "updated_at": "2025-09-30T20:19:47.650839"
-          }
-        },
-        "new_config": {
-          "app": {
-            "name": "CryptoBotDesktop",
-            "version": "1.0.0",
-            "debug": false,
-            "auto_start_bots": false,
-            "auto_restart_bots": true,
-            "offline_mode": false,
-            "language": "pl",
-            "timezone": "Europe/Warsaw"
-          },
-          "database": {
-            "path": "data/database.db",
-            "backup_interval_hours": 24,
-            "max_backups": 7,
-            "auto_backup": true,
-            "backup_path": "data/backup"
-          },
-          "logging": {
-            "level": "INFO",
-            "max_file_size_mb": 10,
-            "max_files": 5,
-            "log_to_console": true,
-            "log_to_file": true,
-            "log_to_database": true,
-            "cleanup_days": 30
-          },
-          "security": {
-            "session_timeout_minutes": 60,
-            "max_login_attempts": 5,
-            "lockout_duration_minutes": 15,
-            "require_password_change_days": 90,
-            "min_password_length": 8,
-            "encryption_algorithm": "AES-256",
-            "auto_lock_minutes": 30
-          },
-          "exchanges": {
-            "default": "binance",
-            "available": [
-              "binance",
-              "bybit",
-              "kucoin",
-              "coinbase",
-              "kraken",
-              "bitfinex"
-            ]
-          },
-          "trading": {
-            "default_quote_currency": "USDT",
-            "min_order_amount": 10.0,
-            "max_order_amount": 10000.0,
-            "default_stop_loss_percent": 5.0,
-            "default_take_profit_percent": 10.0,
-            "max_open_positions": 10,
-            "paper_trading": false,
-            "slippage_tolerance_percent": 0.5,
-            "enabled": true,
-            "mode": "live",
-            "default_exchange": "coinbase",
-            "updated_at": "2025-09-30T20:19:47.662321",
-            "risk_management": {
-              "max_daily_loss": 500.0,
-              "max_position_size": 1000.0,
-              "stop_loss_percentage": 5.0,
-              "take_profit_percentage": 10.0,
-              "max_open_positions": 3
-            }
-          },
-          "test_section": {
-            "test_value": "test_data",
-            "updated_at": "2025-09-30T20:19:47.663861"
-          },
-          "risk_management": {
-            "max_daily_loss": 1.0,
-            "max_position_size": 1000.0,
-            "max_drawdown": 5.0,
-            "default_stop_loss": 1.5,
-            "default_take_profit": 3.0,
-            "max_open_positions": 5,
-            "risk_per_trade": 1.0,
-            "updated_at": "2025-09-30T20:19:47.650839"
-          }
-        },
-        "timestamp": "2025-09-30T20:23:47.631191"
-      }
-    },
-    {
-      "timestamp": "2025-09-30T20:23:47.733242",
+      "timestamp": "2025-10-13T19:00:36.037184",
       "event_type": "CONFIG_UPDATED",
       "data": {
         "config_type": "app",
@@ -262,11 +95,11 @@
             "default_exchange": "coinbase",
             "updated_at": "2025-09-30T20:19:47.662321",
             "risk_management": {
-              "max_daily_loss": 500.0,
-              "max_position_size": 1000.0,
-              "stop_loss_percentage": 5.0,
-              "take_profit_percentage": 10.0,
-              "max_open_positions": 3
+              "max_daily_loss": -100.0,
+              "max_position_size": 0,
+              "stop_loss_percentage": 150.0,
+              "take_profit_percentage": -5.0,
+              "max_open_positions": -1
             }
           },
           "test_section": {
@@ -282,6 +115,15 @@
             "max_open_positions": 5,
             "risk_per_trade": 1.0,
             "updated_at": "2025-09-30T20:19:47.650839"
+          },
+          "bots": {
+            "test_bot": {
+              "enabled": true,
+              "strategy": "ai_trading",
+              "symbol": "BTCUSDT",
+              "amount": 100.0,
+              "interval": "1h"
+            }
           }
         },
         "new_config": {
@@ -376,53 +218,207 @@
             }
           }
         },
-        "timestamp": "2025-09-30T20:23:47.733172"
+        "timestamp": "2025-10-13T19:00:36.036200+00:00"
       }
     },
     {
-      "timestamp": "2025-09-30T20:23:47.834896",
+      "timestamp": "2025-10-13T19:00:36.139530",
+      "event_type": "CONFIG_UPDATED",
+      "data": {
+        "config_type": "app",
+        "old_config": {
+          "app": {
+            "name": "CryptoBotDesktop",
+            "version": "1.0.0",
+            "debug": false,
+            "auto_start_bots": false,
+            "auto_restart_bots": true,
+            "offline_mode": false,
+            "language": "pl",
+            "timezone": "Europe/Warsaw"
+          },
+          "database": {
+            "path": "data/database.db",
+            "backup_interval_hours": 24,
+            "max_backups": 7,
+            "auto_backup": true,
+            "backup_path": "data/backup"
+          },
+          "logging": {
+            "level": "INFO",
+            "max_file_size_mb": 10,
+            "max_files": 5,
+            "log_to_console": true,
+            "log_to_file": true,
+            "log_to_database": true,
+            "cleanup_days": 30
+          },
+          "security": {
+            "session_timeout_minutes": 60,
+            "max_login_attempts": 5,
+            "lockout_duration_minutes": 15,
+            "require_password_change_days": 90,
+            "min_password_length": 8,
+            "encryption_algorithm": "AES-256",
+            "auto_lock_minutes": 30
+          },
+          "exchanges": {
+            "default": "binance",
+            "available": [
+              "binance",
+              "bybit",
+              "kucoin",
+              "coinbase",
+              "kraken",
+              "bitfinex"
+            ]
+          },
+          "trading": {
+            "default_quote_currency": "USDT",
+            "min_order_amount": 10.0,
+            "max_order_amount": 10000.0,
+            "default_stop_loss_percent": 5.0,
+            "default_take_profit_percent": 10.0,
+            "max_open_positions": 10,
+            "paper_trading": false,
+            "slippage_tolerance_percent": 0.5,
+            "enabled": true,
+            "mode": "live",
+            "default_exchange": "coinbase",
+            "updated_at": "2025-09-30T20:19:47.662321",
+            "risk_management": {
+              "max_daily_loss": 500.0,
+              "max_position_size": 1000.0,
+              "stop_loss_percentage": 5.0,
+              "take_profit_percentage": 10.0,
+              "max_open_positions": 3
+            }
+          },
+          "test_section": {
+            "test_value": "test_data",
+            "updated_at": "2025-09-30T20:19:47.663861"
+          },
+          "risk_management": {
+            "max_daily_loss": 1.0,
+            "max_position_size": 1000.0,
+            "max_drawdown": 5.0,
+            "default_stop_loss": 1.5,
+            "default_take_profit": 3.0,
+            "max_open_positions": 5,
+            "risk_per_trade": 1.0,
+            "updated_at": "2025-09-30T20:19:47.650839"
+          },
+          "bots": {
+            "test_bot": {
+              "enabled": true,
+              "strategy": "ai_trading",
+              "symbol": "BTCUSDT",
+              "amount": 100.0,
+              "interval": "1h"
+            }
+          }
+        },
+        "new_config": {
+          "app": {
+            "name": "CryptoBotDesktop",
+            "version": "1.0.0",
+            "debug": false,
+            "auto_start_bots": false,
+            "auto_restart_bots": true,
+            "offline_mode": false,
+            "language": "pl",
+            "timezone": "Europe/Warsaw"
+          },
+          "database": {
+            "path": "data/database.db",
+            "backup_interval_hours": 24,
+            "max_backups": 7,
+            "auto_backup": true,
+            "backup_path": "data/backup"
+          },
+          "logging": {
+            "level": "INFO",
+            "max_file_size_mb": 10,
+            "max_files": 5,
+            "log_to_console": true,
+            "log_to_file": true,
+            "log_to_database": true,
+            "cleanup_days": 30
+          },
+          "security": {
+            "session_timeout_minutes": 60,
+            "max_login_attempts": 5,
+            "lockout_duration_minutes": 15,
+            "require_password_change_days": 90,
+            "min_password_length": 8,
+            "encryption_algorithm": "AES-256",
+            "auto_lock_minutes": 30
+          },
+          "exchanges": {
+            "default": "binance",
+            "available": [
+              "binance",
+              "bybit",
+              "kucoin",
+              "coinbase",
+              "kraken",
+              "bitfinex"
+            ]
+          },
+          "trading": {
+            "default_quote_currency": "USDT",
+            "min_order_amount": 10.0,
+            "max_order_amount": 10000.0,
+            "default_stop_loss_percent": 5.0,
+            "default_take_profit_percent": 10.0,
+            "max_open_positions": 10,
+            "paper_trading": false,
+            "slippage_tolerance_percent": 0.5,
+            "enabled": true,
+            "mode": "live",
+            "default_exchange": "coinbase",
+            "updated_at": "2025-09-30T20:19:47.662321",
+            "risk_management": {
+              "max_daily_loss": 500.0,
+              "max_position_size": 1000.0,
+              "stop_loss_percentage": 5.0,
+              "take_profit_percentage": 10.0,
+              "max_open_positions": 3
+            }
+          },
+          "test_section": {
+            "test_value": "test_data",
+            "updated_at": "2025-09-30T20:19:47.663861"
+          },
+          "risk_management": {
+            "max_daily_loss": 1.0,
+            "max_position_size": 1000.0,
+            "max_drawdown": 5.0,
+            "default_stop_loss": 1.5,
+            "default_take_profit": 3.0,
+            "max_open_positions": 5,
+            "risk_per_trade": 1.0,
+            "updated_at": "2025-09-30T20:19:47.650839"
+          },
+          "bots": {
+            "test_bot": {
+              "enabled": true,
+              "strategy": "ai_trading",
+              "symbol": "BTCUSDT",
+              "amount": 100.0,
+              "interval": "1h"
+            }
+          }
+        },
+        "timestamp": "2025-10-13T19:00:36.138680+00:00"
+      }
+    },
+    {
+      "timestamp": "2025-10-13T19:00:36.241416",
       "event_type": "CONFIG_UPDATED",
       "data": {
         "config_type": "ui",
         "old_config": {
-          "theme": {
-            "current": "dark",
-            "available": [
-              "light",
-              "dark",
-              "auto"
-            ],
-            "auto_switch": false
-          },
-          "window": {
-            "default_width": 1200,
-            "default_height": 800,
-            "min_width": 800,
-            "min_height": 600,
-            "remember_size": true,
-            "remember_position": true,
-            "start_maximized": false
-          },
-          "dashboard": {
-            "refresh_interval_seconds": 5,
-            "show_portfolio_summary": true,
-            "show_active_bots": true,
-            "show_recent_trades": true,
-            "max_recent_trades": 10
-          },
-          "notifications": {
-            "position": "top-right",
-            "duration_seconds": 5,
-            "max_notifications": 5,
-            "auto_dismiss": true,
-            "sound_enabled": true
-          },
-          "ui_test": {
-            "theme": "dark",
-            "language": "pl"
-          }
-        },
-        "new_config": {
           "theme": "light",
           "window": {
             "default_width": 1200,
@@ -453,7 +449,38 @@
           },
           "last_updated": "2025-09-30T20:23:47.834304"
         },
-        "timestamp": "2025-09-30T20:23:47.834859"
+        "new_config": {
+          "theme": "dark",
+          "window": {
+            "default_width": 1200,
+            "default_height": 800,
+            "min_width": 800,
+            "min_height": 600,
+            "remember_size": true,
+            "remember_position": true,
+            "start_maximized": false
+          },
+          "dashboard": {
+            "refresh_interval_seconds": 5,
+            "show_portfolio_summary": true,
+            "show_active_bots": true,
+            "show_recent_trades": true,
+            "max_recent_trades": 10
+          },
+          "notifications": {
+            "position": "top-right",
+            "duration_seconds": 5,
+            "max_notifications": 5,
+            "auto_dismiss": true,
+            "sound_enabled": true
+          },
+          "ui_test": {
+            "theme": "dark",
+            "language": "pl"
+          },
+          "last_updated": "2025-10-13T19:00:36.240540"
+        },
+        "timestamp": "2025-10-13T19:00:36.240960+00:00"
       }
     }
   ]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 CRYPTOBOTDESKTOP - PROSTY RUNNER TESTOW
-======================================
+== == == == == == == == == == == == == == == ==
 
 Uproszczony skrypt uruchamiajacy wszystkie testy bez emoji
 dla kompatybilnosci z Windows PowerShell.

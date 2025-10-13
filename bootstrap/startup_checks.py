@@ -10,9 +10,9 @@ except Exception:
 
 import logging
 from pathlib import Path
-import yaml
 import asyncio
 import threading, time as _t
+from utils.yaml_loader import safe_load
 
 from utils.logging_config import setup_logging
 from utils.config_validation import validate_app_config
@@ -53,7 +53,7 @@ def run_startup_checks():
                     + " or fill config.exchanges." + ex + " and consider secure storage."
                 )
     # DB migrate
-    cfg = yaml.safe_load((Path(__file__).resolve().parents[1]/'config'/'app_config.yaml').read_text(encoding='utf-8'))
+    cfg = safe_load((Path(__file__).resolve().parents[1]/'config'/'app_config.yaml').read_text(encoding='utf-8'))
     db_rel = cfg.get('database', {}).get('path', 'data/database.db')
     db_path = Path(__file__).resolve().parents[1] / db_rel
     db_path.parent.mkdir(parents=True, exist_ok=True)
