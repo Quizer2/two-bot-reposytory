@@ -249,31 +249,33 @@ class ExchangeConfigWidget(QWidget):
                     exchange_data = {
                         'name': exchange_name.title(),
                         'api_key': config.get('api_key', ''),
-                        'api_secret': '***' if has_secret else '',
+                        'api_secret': config.get('secret', ''),
+                        'display_secret': '***' if has_secret else '',
                         'passphrase': config.get('passphrase', ''),
                         'testnet': config.get('sandbox', True),
                         'enabled': is_enabled,
-                        'status': status
+                        'status': status,
+                        'options': config.get('options', {}),
                     }
-                    
+
                     self.exchanges.append(exchange_data)
                     
             except Exception as e:
                 print(f"Error loading exchanges: {e}")
                 # Fallback do przykładowych danych
                 self.exchanges = [
-                    {'name': 'Binance', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                    {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                    {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                    {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'}
+                    {'name': 'Binance', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                    {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                    {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                    {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}}
                 ]
         else:
             # Fallback gdy ApiConfigManager nie jest dostępny
             self.exchanges = [
-                {'name': 'Binance', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'}
+                {'name': 'Binance', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}}
             ]
         
         self.update_exchanges_list()
@@ -381,7 +383,8 @@ class ExchangeConfigWidget(QWidget):
                         'secret': exchange_data['api_secret'],
                         'passphrase': exchange_data.get('passphrase', ''),
                         'sandbox': exchange_data.get('testnet', True),
-                        'enabled': exchange_data.get('enabled', False)
+                        'enabled': exchange_data.get('enabled', False),
+                        'options': exchange_data.get('options', {}),
                     })
                     self.api_config_manager.save_config()
                 except Exception as e:
@@ -398,10 +401,24 @@ class ExchangeConfigWidget(QWidget):
     def edit_exchange(self, item):
         """Edytuje giełdę"""
         exchange_data = item.data(Qt.ItemDataRole.UserRole)
+        if self.api_config_manager:
+            try:
+                exchange_name = exchange_data['name'].lower()
+                cfg = self.api_config_manager.get_exchange_config(exchange_name) or {}
+                exchange_data.update({
+                    'api_key': cfg.get('api_key', ''),
+                    'api_secret': cfg.get('secret', ''),
+                    'passphrase': cfg.get('passphrase', ''),
+                    'testnet': cfg.get('sandbox', exchange_data.get('testnet', True)),
+                    'enabled': cfg.get('enabled', exchange_data.get('enabled', False)),
+                    'options': cfg.get('options', exchange_data.get('options', {})),
+                })
+            except Exception as e:
+                print(f"Error loading exchange config for edit: {e}")
         dialog = ExchangeDialog(self, exchange_data, api_config_manager=self.api_config_manager)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             updated_data = dialog.get_exchange_data()
-            
+
             # Zapisz do ApiConfigManager jeśli dostępny
             if self.api_config_manager:
                 try:
@@ -411,7 +428,8 @@ class ExchangeConfigWidget(QWidget):
                         'secret': updated_data['api_secret'],
                         'passphrase': updated_data.get('passphrase', ''),
                         'sandbox': updated_data.get('testnet', True),
-                        'enabled': updated_data.get('enabled', False)
+                        'enabled': updated_data.get('enabled', False),
+                        'options': updated_data.get('options', {}),
                     })
                     self.api_config_manager.save_config()
                 except Exception as e:
@@ -520,6 +538,11 @@ class ExchangeDialog(QDialog):
         # Testnet
         self.testnet_checkbox = QCheckBox("Użyj Testnet")
         form_layout.addRow("", self.testnet_checkbox)
+
+        # Aktywacja giełdy
+        self.enabled_checkbox = QCheckBox("Aktywuj giełdę i używaj danych live")
+        self.enabled_checkbox.setChecked(True)
+        form_layout.addRow("", self.enabled_checkbox)
         
         layout.addLayout(form_layout)
         
@@ -568,7 +591,8 @@ class ExchangeDialog(QDialog):
             self.api_secret_edit.setText(self.exchange_data.get('api_secret', ''))
             self.passphrase_edit.setText(self.exchange_data.get('passphrase', ''))
             self.testnet_checkbox.setChecked(self.exchange_data.get('testnet', False))
-    
+            self.enabled_checkbox.setChecked(self.exchange_data.get('enabled', True))
+        
     def get_exchange_data(self) -> Dict:
         """Zwraca dane giełdy z formularza"""
         return {
@@ -577,6 +601,7 @@ class ExchangeDialog(QDialog):
             'api_secret': self.api_secret_edit.text(),
             'passphrase': self.passphrase_edit.text(),
             'testnet': self.testnet_checkbox.isChecked(),
+            'enabled': self.enabled_checkbox.isChecked(),
             'permissions': {
                 'read': self.read_checkbox.isChecked(),
                 'trade': self.trade_checkbox.isChecked(),

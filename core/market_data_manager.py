@@ -1,18 +1,43 @@
+"""Market Data Manager - zarządzanie danymi rynkowymi.
+
+Wersja produkcyjna automatycznie próbuje korzystać z prawdziwych danych
+giełdowych, jeżeli konfiguracja zawiera aktywne klucze API lub użytkownik
+włącza odpowiednią opcję w panelu.  Fallback do danych symulowanych
+pozostaje dostępny na potrzeby testów offline.
 """
-Market Data Manager - Zarządzanie danymi rynkowymi
-"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
 import json
-import websocket
+import os
+import random
 import threading
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable, Tuple, Set
 from dataclasses import dataclass
-import requests
 
+try:  # pragma: no cover - optional dependency in CI
+    import websocket  # type: ignore
+except Exception:  # pragma: no cover - fallback used in tests
+    websocket = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import requests  # type: ignore
+except Exception:  # pragma: no cover - handled by mock helpers
+    requests = None
+
+from app.exchange.adapter_factory import create_exchange_adapter
+from app.exchange.live_ccxt_adapter import LiveCCXTAdapter
+from utils.config_manager import get_config_manager
 from utils.helpers import get_or_create_event_loop, schedule_coro_safely
+
+try:  # pragma: no cover - opcjonalny moduł (może nie istnieć w środowisku CI)
+    from app.api_config_manager import get_api_config_manager
+except Exception:  # pragma: no cover - brak managera API w środowisku testowym
+    get_api_config_manager = None  # type: ignore
 
 from .websocket_callback_manager import WebSocketCallbackManager, WebSocketEventType, StandardizedTickerData
 
@@ -54,30 +79,54 @@ class MarketDataManager:
         self.subscriptions: Dict[str, List[Callable]] = {}
         self.price_cache: Dict[str, PriceData] = {}
         self.orderbook_cache: Dict[str, OrderBookData] = {}
+        self.candle_cache: Dict[str, List[Dict[str, Any]]] = {}
         self.websocket_connections: Dict[str, Any] = {}
+        self._websocket_threads: Dict[str, threading.Thread] = {}
         self.running = False
         self.update_interval = 1.0  # sekundy
-        
+
         # Symbole do śledzenia
         self.tracked_symbols = ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT']
-        
+
         # WebSocket callback manager
         self.ws_callback_manager = WebSocketCallbackManager()
         self._setup_websocket_callbacks()
-        
+
+        self.enable_live = self._determine_live_mode()
+        logger.info("MarketDataManager live market data %s", "ENABLED" if self.enable_live else "DISABLED")
+
         # Konfiguracja giełd
         self.exchanges = {
             'binance': {
                 'rest_url': 'https://api.binance.com/api/v3',
                 'ws_url': 'wss://stream.binance.com:9443/ws',
-                'enabled': True
+                'enabled': self.enable_live
             },
             'bybit': {
                 'rest_url': 'https://api.bybit.com/v2/public',
                 'ws_url': 'wss://stream.bybit.com/realtime',
-                'enabled': False  # Wyłączone domyślnie
+                'enabled': self.enable_live
             }
         }
+
+        self._live_price_adapter: Optional[LiveCCXTAdapter] = None
+        if self.enable_live:
+            try:
+                loop = get_or_create_event_loop()
+                adapter = create_exchange_adapter(
+                    'binance',
+                    mode='live',
+                    event_loop=loop,
+                    intent='market_data',
+                )
+                if isinstance(adapter, LiveCCXTAdapter):
+                    self._live_price_adapter = adapter
+                else:
+                    logger.warning("Live adapter request returned simulated implementation – disabling live feed")
+                    self._live_price_adapter = None
+            except Exception as exc:
+                logger.warning("Live price adapter initialisation failed: %s", exc)
+                self._live_price_adapter = None
         
         # Symbole do śledzenia - pojedyncza inicjalizacja
         # self.tracked_symbols już ustawione wcześniej; zapewnij spójność
@@ -85,6 +134,46 @@ class MarketDataManager:
         # (patrz definicja metody poniżej)
         # self.tracked_symbols = self.tracked_symbols
     
+    def _determine_live_mode(self) -> bool:
+        env_flag = os.environ.get('ENABLE_REAL_MARKET_DATA')
+        if env_flag is not None:
+            return env_flag.lower() in ('1', 'true', 'yes', 'on')
+
+        try:
+            config_manager = get_config_manager()
+            offline_mode = bool(config_manager.get_setting('app', 'app.offline_mode', False))
+            if offline_mode:
+                return False
+            trading_mode = str(config_manager.get_setting('app', 'trading.mode', 'auto')).lower()
+        except Exception:
+            trading_mode = 'auto'
+
+        if get_api_config_manager is not None:
+            try:
+                manager = get_api_config_manager()
+                for exchange in manager.get_available_exchanges():
+                    cfg = manager.get_exchange_config(exchange) or {}
+                    if cfg.get('enabled') and (cfg.get('api_key') or cfg.get('secret')):
+                        return True
+            except Exception as exc:
+                logger.debug("APIConfigManager live mode probe failed: %s", exc)
+
+        credentials_file = Path('config/exchange_credentials.json')
+        if credentials_file.exists():
+            try:
+                with credentials_file.open('r', encoding='utf-8') as handle:
+                    payload = json.load(handle)
+                if isinstance(payload, dict):
+                    for cfg in payload.values():
+                        if not isinstance(cfg, dict):
+                            continue
+                        if bool(cfg.get('enabled', True)) and (cfg.get('api_key') or cfg.get('secret')):
+                            return True
+            except Exception as exc:
+                logger.debug("Credential file live mode probe failed: %s", exc)
+
+        return trading_mode == 'live'
+
     def _setup_websocket_callbacks(self):
         """Konfiguruje callbacki WebSocket (idempotentnie)."""
         exchanges = ['binance', 'bybit', 'kucoin', 'coinbase']
@@ -191,6 +280,38 @@ class MarketDataManager:
             logger.debug(f"Received orderbook update for {orderbook_data.symbol}")
         except Exception as e:
             logger.error(f"Error handling orderbook update: {e}")
+
+    async def _ingest_websocket_ticker(self, payload: Dict[str, Any]):
+        try:
+            symbol = str(payload.get('s') or payload.get('symbol') or '').upper()
+            if not symbol:
+                return
+
+            price = float(payload.get('c') or payload.get('C') or payload.get('p') or 0.0)
+            bid = float(payload.get('b') or payload.get('B') or price)
+            ask = float(payload.get('a') or payload.get('A') or price)
+            volume = float(payload.get('v') or payload.get('V') or 0.0)
+            change = float(payload.get('p') or payload.get('P') or 0.0)
+            change_percent = float(payload.get('P') or payload.get('p') or 0.0)
+            event_time = payload.get('E') or payload.get('eventTime')
+            if event_time:
+                timestamp = datetime.utcfromtimestamp(float(event_time) / 1000.0)
+            else:
+                timestamp = datetime.utcnow()
+
+            price_data = PriceData(
+                symbol=symbol,
+                price=price,
+                bid=bid,
+                ask=ask,
+                volume_24h=volume,
+                change_24h=change,
+                change_24h_percent=change_percent,
+                timestamp=timestamp,
+            )
+            await self.update_price_data(symbol, price_data)
+        except Exception as exc:
+            logger.error(f"Error ingesting websocket ticker: {exc}")
         
     async def start(self):
         """Uruchamia manager danych rynkowych"""
@@ -248,9 +369,12 @@ class MarketDataManager:
             for exchange, ws in self.websocket_connections.items():
                 if ws:
                     ws.close()
-            
+                thread = self._websocket_threads.get(exchange)
+                if thread and thread.is_alive():  # pragma: no cover - requires live ws
+                    thread.join(timeout=2.0)
+
             logger.info("MarketDataManager stopped")
-            
+
         except Exception as e:
             logger.error(f"Error stopping MarketDataManager: {e}")
     
@@ -267,6 +391,24 @@ class MarketDataManager:
         # Dodaj symbol do śledzonych jeśli nie ma i zarejestruj WS callbacki
         if symbol not in self.tracked_symbols:
             self.add_tracked_symbol(symbol)
+
+    def subscribe_to_ticker(self, symbol: str, callback: Callable[[Dict[str, Any]], None]):
+        """Alias wymagany przez testy UI – deleguje do :meth:`subscribe_to_price`."""
+
+        def _wrapper(price_data: PriceData) -> None:
+            ticker = {
+                'symbol': price_data.symbol,
+                'price': price_data.price,
+                'bid': price_data.bid,
+                'ask': price_data.ask,
+                'volume_24h': price_data.volume_24h,
+                'change_24h': price_data.change_24h,
+                'change_24h_percent': price_data.change_24h_percent,
+                'timestamp': price_data.timestamp.isoformat(),
+            }
+            callback(ticker)
+
+        self.subscribe_to_price(symbol, _wrapper)
     
     def set_integrated_data_manager(self, integrated_data_manager):
         """Ustawia referencję do IntegratedDataManager dla propagacji danych"""
@@ -291,12 +433,35 @@ class MarketDataManager:
         """Anuluje subskrypcję aktualizacji cen"""
         if symbol in self.subscriptions and callback in self.subscriptions[symbol]:
             self.subscriptions[symbol].remove(callback)
-            
+
             if not self.subscriptions[symbol]:
                 del self.subscriptions[symbol]
-        
+
         logger.info(f"Unsubscribed from price updates for {symbol}")
-    
+
+    async def get_price(self, symbol: str) -> Optional[float]:
+        """Zwraca jedynie wartość ceny dla wygody testów."""
+
+        price_data = await self.get_current_price(symbol)
+        return price_data.price if price_data else None
+
+    async def get_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Zwraca uproszczony ticker w formacie przyjaznym dla UI."""
+
+        price_data = await self.get_current_price(symbol)
+        if not price_data:
+            return None
+        return {
+            'symbol': price_data.symbol,
+            'price': price_data.price,
+            'bid': price_data.bid,
+            'ask': price_data.ask,
+            'volume_24h': price_data.volume_24h,
+            'change_24h': price_data.change_24h,
+            'change_24h_percent': price_data.change_24h_percent,
+            'timestamp': price_data.timestamp.isoformat(),
+        }
+
     async def get_current_price(self, symbol: str) -> Optional[PriceData]:
         """Pobiera aktualną cenę symbolu"""
         try:
@@ -327,18 +492,98 @@ class MarketDataManager:
                 cached_data = self.orderbook_cache[symbol]
                 if datetime.now() - cached_data.timestamp < timedelta(seconds=5):
                     return cached_data
-            
+
             # Pobierz z API
             orderbook_data = await self._fetch_orderbook_from_api(symbol, depth)
             if orderbook_data:
                 self.orderbook_cache[symbol] = orderbook_data
                 return orderbook_data
-            
+
             return None
-            
+
         except Exception as e:
             logger.error(f"Error getting orderbook for {symbol}: {e}")
             return None
+
+    async def fetch_candles(
+        self,
+        symbol: str,
+        *,
+        timeframe: str = "1m",
+        limit: int = 120,
+    ) -> List[Dict[str, Any]]:
+        """Pobiera dane świecowe dla wskazanego symbolu.
+
+        Preferuje połączenie CCXT, następnie publiczne REST API Binance, a na
+        końcu generuje stabilny fallback na podstawie lokalnego cache'u.
+        """
+
+        cache_key = f"{symbol}:{timeframe}:{limit}"
+        cached = self.candle_cache.get(cache_key)
+        if cached and cached and (
+            datetime.now() - cached[-1]["timestamp"] < timedelta(seconds=30)
+        ):
+            return cached
+
+        candles: List[Dict[str, Any]] = []
+
+        # 1. Spróbuj użyć adaptera CCXT jeżeli jest dostępny
+        if self._live_price_adapter and hasattr(self._live_price_adapter, "fetch_ohlcv"):
+            ccxt_symbol = self._normalise_symbol_for_ccxt(symbol)
+            try:
+                raw = await self._live_price_adapter.fetch_ohlcv(
+                    ccxt_symbol, timeframe=timeframe, limit=limit
+                )
+                candles = [
+                    {
+                        "symbol": symbol,
+                        "timestamp": datetime.fromtimestamp(entry["timestamp"] / 1000.0),
+                        "open": entry["open"],
+                        "high": entry["high"],
+                        "low": entry["low"],
+                        "close": entry["close"],
+                        "volume": entry["volume"],
+                    }
+                    for entry in raw
+                ]
+            except Exception as exc:
+                logger.debug("CCXT fetch_ohlcv failed for %s: %s", symbol, exc)
+
+        # 2. Publiczne REST API Binance jako fallback
+        if not candles and self.exchanges.get("binance", {}).get("enabled") and requests:
+            try:
+                url = f"{self.exchanges['binance']['rest_url']}/klines"
+                params = {"symbol": symbol, "interval": timeframe, "limit": limit}
+                response = requests.get(url, params=params, timeout=5)  # type: ignore[operator]
+                if response.status_code == 200:
+                    data = response.json()
+                    candles = [
+                        {
+                            "symbol": symbol,
+                            "timestamp": datetime.fromtimestamp(int(item[0]) / 1000.0),
+                            "open": float(item[1]),
+                            "high": float(item[2]),
+                            "low": float(item[3]),
+                            "close": float(item[4]),
+                            "volume": float(item[5]),
+                        }
+                        for item in data
+                    ]
+                else:
+                    logger.debug(
+                        "Binance klines request failed (%s): %s",
+                        response.status_code,
+                        response.text[:200],
+                    )
+            except Exception as exc:
+                logger.debug("Binance klines fetch failed for %s: %s", symbol, exc)
+
+        # 3. Generuj fallback gdy brak zewnętrznych danych
+        if not candles:
+            candles = self._generate_mock_candles(symbol, limit)
+
+        self.candle_cache[cache_key] = candles
+        return candles
     
     async def _price_update_loop(self):
         """Pętla aktualizacji cen"""
@@ -367,16 +612,29 @@ class MarketDataManager:
     async def _fetch_price_from_api(self, symbol: str) -> Optional[PriceData]:
         """Pobiera cenę z API Binance"""
         try:
-            if not self.exchanges['binance']['enabled']:
+            if self._live_price_adapter:
+                ticker = await self._live_price_adapter.fetch_ticker(symbol)
+                return PriceData(
+                    symbol=symbol,
+                    price=float(ticker.get('last') or ticker.get('close') or ticker.get('ask') or 0.0),
+                    bid=float(ticker.get('bid') or ticker.get('ask') or 0.0),
+                    ask=float(ticker.get('ask') or ticker.get('bid') or 0.0),
+                    volume_24h=float(ticker.get('baseVolume') or ticker.get('quoteVolume') or 0.0),
+                    change_24h=float(ticker.get('change') or ticker.get('percentage', 0.0) * 0.01),
+                    change_24h_percent=float(ticker.get('percentage') or 0.0),
+                    timestamp=datetime.now(),
+                )
+
+            if not self.exchanges.get('binance', {}).get('enabled') or not requests:
                 return self._get_mock_price_data(symbol)
-            
+
             url = f"{self.exchanges['binance']['rest_url']}/ticker/24hr"
             params = {'symbol': symbol}
-            
-            response = requests.get(url, params=params, timeout=5)
+
+            response = requests.get(url, params=params, timeout=5)  # type: ignore[operator]
             if response.status_code == 200:
                 data = response.json()
-                
+
                 return PriceData(
                     symbol=symbol,
                     price=float(data['lastPrice']),
@@ -398,13 +656,24 @@ class MarketDataManager:
     async def _fetch_orderbook_from_api(self, symbol: str, depth: int) -> Optional[OrderBookData]:
         """Pobiera order book z API"""
         try:
-            if not self.exchanges['binance']['enabled']:
+            if self._live_price_adapter:
+                book = await self._live_price_adapter.fetch_order_book(symbol, depth)
+                bids = [(float(b[0]), float(b[1])) for b in book.get('bids', [])[:depth]]
+                asks = [(float(a[0]), float(a[1])) for a in book.get('asks', [])[:depth]]
+                return OrderBookData(
+                    symbol=symbol,
+                    bids=bids,
+                    asks=asks,
+                    timestamp=datetime.now(),
+                )
+
+            if not self.exchanges.get('binance', {}).get('enabled') or not requests:
                 return self._get_mock_orderbook_data(symbol)
-            
+
             url = f"{self.exchanges['binance']['rest_url']}/depth"
             params = {'symbol': symbol, 'limit': depth}
-            
-            response = requests.get(url, params=params, timeout=5)
+
+            response = requests.get(url, params=params, timeout=5)  # type: ignore[operator]
             if response.status_code == 200:
                 data = response.json()
                 
@@ -427,12 +696,69 @@ class MarketDataManager:
     async def _start_binance_websocket(self):
         """Uruchamia WebSocket dla Binance"""
         try:
-            # Implementacja WebSocket będzie dodana w przyszłości
-            logger.info("WebSocket for Binance will be implemented in future updates")
-            
+            if not self.exchanges.get('binance', {}).get('enabled'):
+                logger.debug("Binance WebSocket disabled - offline mode")
+                return
+            if websocket is None:
+                logger.warning("WebSocket library not available, falling back to mock data")
+                return
+
+            symbols = [symbol.lower() for symbol in self.tracked_symbols]
+            if not symbols:
+                logger.debug("No symbols tracked – skipping Binance WebSocket initialisation")
+                return
+
+            stream = "/".join(f"{symbol}@ticker" for symbol in symbols)
+            url = f"{self.exchanges['binance']['ws_url']}/{stream}"
+
+            def _on_message(ws, message):
+                try:
+                    payload = json.loads(message)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.error("Failed to decode Binance WS payload: %s", exc)
+                    return
+
+                data = payload.get('data') if isinstance(payload, dict) else payload
+                if isinstance(data, dict) and data.get('s'):
+                    schedule_coro_safely(lambda: self._ingest_websocket_ticker(data))
+
+            def _on_error(ws, error):  # pragma: no cover - requires live WS
+                logger.error("Binance WS error: %s", error)
+
+            def _on_close(ws, *_):  # pragma: no cover - requires live WS
+                logger.info("Binance WS closed")
+
+            def _on_open(ws):  # pragma: no cover - requires live WS
+                logger.info("Binance WS connection opened for symbols: %s", ", ".join(self.tracked_symbols))
+
+            ws_app = websocket.WebSocketApp(
+                url,
+                on_message=_on_message,
+                on_error=_on_error,
+                on_close=_on_close,
+                on_open=_on_open,
+            )
+
+            thread = threading.Thread(target=ws_app.run_forever, daemon=True)
+            thread.start()
+            self.websocket_connections['binance'] = ws_app
+            self._websocket_threads['binance'] = thread
+            logger.info("Binance WebSocket started in background thread")
+
         except Exception as e:
             logger.error(f"Error starting Binance WebSocket: {e}")
     
+    def _normalise_symbol_for_ccxt(self, symbol: str) -> str:
+        if "/" in symbol:
+            return symbol
+        if symbol.endswith("USDT"):
+            return f"{symbol[:-4]}/USDT"
+        if symbol.endswith("USD"):
+            return f"{symbol[:-3]}/USD"
+        if symbol.endswith("USDC"):
+            return f"{symbol[:-4]}/USDC"
+        return symbol
+
     def _get_mock_price_data(self, symbol: str) -> PriceData:
         """Zwraca przykładowe dane cenowe"""
         mock_prices = {
@@ -479,6 +805,32 @@ class MarketDataManager:
             timestamp=datetime.now()
         )
 
+    def _generate_mock_candles(self, symbol: str, limit: int) -> List[Dict[str, Any]]:
+        cached = self.price_cache.get(symbol)
+        last_price = cached.price if cached else self._get_mock_price_data(symbol).price
+        candles: List[Dict[str, Any]] = []
+        base_time = datetime.now()
+        for idx in range(limit):
+            ts = base_time - timedelta(minutes=(limit - idx))
+            open_price = last_price
+            high = open_price * (1 + random.uniform(0.0, 0.004))
+            low = open_price * (1 - random.uniform(0.0, 0.004))
+            close = random.uniform(low, high)
+            volume = random.uniform(25.0, 250.0)
+            candles.append(
+                {
+                    "symbol": symbol,
+                    "timestamp": ts,
+                    "open": round(open_price, 4),
+                    "high": round(high, 4),
+                    "low": round(low, 4),
+                    "close": round(close, 4),
+                    "volume": round(volume, 4),
+                }
+            )
+            last_price = close
+        return candles
+
 
 # Singleton instance
 _market_data_manager_instance = None
@@ -489,3 +841,6 @@ def get_market_data_manager() -> MarketDataManager:
     if _market_data_manager_instance is None:
         _market_data_manager_instance = MarketDataManager()
     return _market_data_manager_instance
+
+
+__all__ = ['MarketDataManager', 'PriceData', 'OrderBookData', 'TradeData', 'get_market_data_manager']

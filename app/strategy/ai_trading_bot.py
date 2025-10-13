@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 import json
 import pickle
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 
 # Machine Learning imports
@@ -43,6 +43,11 @@ class MarketCondition:
     macd_signal: float
     bollinger_position: float
     market_sentiment: str  # 'bullish', 'bearish', 'neutral'
+    ai_confidence: float = 0.0
+    risk_level: str = "unknown"
+    technicals: Dict[str, Any] = field(default_factory=dict)
+    feature_vector: Dict[str, Any] = field(default_factory=dict)
+    strategy_summary: List[Any] = field(default_factory=list)
     
     
 @dataclass
@@ -164,7 +169,11 @@ class AITradingBot(BaseBot):
         self.last_trade_time = None
         self.total_trades = 0
         self.successful_trades = 0
-        
+
+        # Provider danych AI dla bogatszego kontekstu rynkowego
+        self.ai_data_provider = None
+        self.latest_ai_snapshot: Optional[Dict[str, Any]] = None
+
         self.logger.info(f"AI Trading Bot zainicjalizowany - cel: ${self.target_hourly_profit}/h")
     
     async def initialize(self, db_manager, risk_manager, exchange, data_manager=None):
@@ -197,7 +206,10 @@ class AITradingBot(BaseBot):
                 await self._initialize_ml_model()
             else:
                 self.logger.warning("Biblioteki ML niedostępne - używanie uproszczonej logiki")
-            
+
+            # Zsynchronizuj kontekst AI (dane rynkowe + ryzyko)
+            await self._load_ai_context()
+
             # Przeprowadź początkową analizę rynku
             await self._analyze_market_conditions()
             
@@ -258,9 +270,11 @@ class AITradingBot(BaseBot):
         """Analiza aktualnych warunków rynkowych"""
         try:
             pair = self.parameters['pair']
-            
+
             # Pobierz dane OHLCV
             ohlcv_data = await self.exchange.get_ohlcv(pair, '1h', limit=100)
+            if not ohlcv_data:
+                ohlcv_data = await self._fallback_ohlcv_from_provider(pair)
             if not ohlcv_data:
                 return self.current_market_condition
             
@@ -285,7 +299,15 @@ class AITradingBot(BaseBot):
                 bollinger_position=bollinger_position,
                 market_sentiment=market_sentiment
             )
-            
+
+            snapshot = None
+            if self.ai_data_provider is not None:
+                snapshot = self.latest_ai_snapshot or self.ai_data_provider.get_last_snapshot()
+                if snapshot:
+                    market_condition = self._enrich_market_condition_with_ai(
+                        market_condition, snapshot, pair
+                    )
+
             self.current_market_condition = market_condition
             self.market_history.append(market_condition)
             
@@ -302,14 +324,116 @@ class AITradingBot(BaseBot):
         except Exception as e:
             self.logger.error(f"Błąd analizy warunków rynkowych: {e}")
             return self.current_market_condition
+
+    def _enrich_market_condition_with_ai(
+        self, condition: MarketCondition, snapshot: Optional[Dict[str, Any]], pair: str
+    ) -> MarketCondition:
+        try:
+            if not snapshot:
+                return condition
+            symbol_key = self._normalise_symbol_for_provider(pair)
+            technicals = snapshot.get('technical_indicators', {}) or {}
+            technical_entry = technicals.get(symbol_key)
+            if technical_entry is None:
+                for key, value in technicals.items():
+                    if self._normalise_symbol_for_provider(key) == symbol_key:
+                        technical_entry = value
+                        break
+            if isinstance(technical_entry, dict):
+                condition.technicals = technical_entry
+                condition.rsi = float(technical_entry.get('rsi', condition.rsi) or condition.rsi)
+                trend_strength = technical_entry.get('trend_strength')
+                if trend_strength is not None:
+                    condition.trend_strength = float(trend_strength)
+
+            feature_matrix = snapshot.get('feature_matrix', []) or []
+            feature_entry = None
+            for entry in feature_matrix:
+                bot_match = str(entry.get('bot_id')) == str(self.bot_id)
+                symbol_match = self._normalise_symbol_for_provider(entry.get('symbol', '')) == symbol_key
+                if bot_match or symbol_match:
+                    feature_entry = entry
+                    break
+            if isinstance(feature_entry, dict):
+                condition.feature_vector = feature_entry
+                condition.ai_confidence = float(feature_entry.get('strategy_confidence') or 0.0)
+                condition.risk_level = feature_entry.get('risk_level', condition.risk_level)
+                summary = feature_entry.get('strategy_summary') or []
+                if isinstance(summary, list):
+                    condition.strategy_summary = summary
+
+            risk_reports = snapshot.get('risk_reports', []) or []
+            for report in risk_reports:
+                if str(report.get('bot_id')) == str(self.bot_id):
+                    recent_events = report.get('recent_events') or []
+                    if recent_events:
+                        last_event = recent_events[-1]
+                        condition.risk_level = last_event.get('level', condition.risk_level)
+                    break
+        except Exception as exc:
+            self.logger.debug(f"AI enrichment failed: {exc}")
+        return condition
     
     def _calculate_volatility(self, df: pd.DataFrame) -> float:
         """Oblicz zmienność rynku"""
         if len(df) < 20:
             return 0.0
-        
+
         returns = df['close'].pct_change().dropna()
         return float(returns.std() * np.sqrt(24))  # Annualized volatility
+
+    def _normalise_symbol_for_provider(self, pair: str) -> str:
+        if not pair:
+            return 'BTCUSDT'
+        if '/' in pair:
+            base, quote = pair.split('/')
+            return f"{base}{quote}"
+        return pair.replace('-', '').upper()
+
+    async def _fallback_ohlcv_from_provider(self, pair: str) -> List[List[float]]:
+        if self.ai_data_provider is None:
+            return []
+
+        symbol = self._normalise_symbol_for_provider(pair)
+        snapshot = self.latest_ai_snapshot or self.ai_data_provider.get_last_snapshot()
+        candles = []
+        if snapshot and isinstance(snapshot, dict):
+            candles = snapshot.get('candles', {}).get(symbol, [])
+
+        if not candles:
+            try:
+                snapshot = await self.ai_data_provider.manual_refresh([symbol])
+                self.latest_ai_snapshot = snapshot
+                if snapshot:
+                    candles = snapshot.get('candles', {}).get(symbol, [])
+            except Exception as exc:
+                self.logger.debug(f"Fallback OHLCV refresh failed: {exc}")
+                candles = []
+
+        normalized: List[List[float]] = []
+        for candle in candles or []:
+            ts = candle.get('timestamp')
+            if isinstance(ts, str):
+                try:
+                    ts_dt = datetime.fromisoformat(ts)
+                except Exception:
+                    ts_dt = datetime.now()
+            elif isinstance(ts, datetime):
+                ts_dt = ts
+            else:
+                ts_dt = datetime.now()
+
+            normalized.append(
+                [
+                    int(ts_dt.timestamp() * 1000),
+                    float(candle.get('open', 0.0)),
+                    float(candle.get('high', 0.0)),
+                    float(candle.get('low', 0.0)),
+                    float(candle.get('close', 0.0)),
+                    float(candle.get('volume', 0.0)),
+                ]
+            )
+        return normalized
     
     def _calculate_trend_strength(self, df: pd.DataFrame) -> float:
         """Oblicz siłę trendu"""
@@ -885,10 +1009,44 @@ class AITradingBot(BaseBot):
                 self.logger.info("Załadowano zapisany model ML")
             except FileNotFoundError:
                 self.logger.info("Brak zapisanego modelu - zostanie utworzony nowy")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania danych historycznych: {e}")
-    
+
+    async def _load_ai_context(self):
+        """Połącz z agregatorem danych AI i pobierz aktualny snapshot."""
+        try:
+            from analytics.ai_bot_data_provider import get_ai_bot_data_provider
+        except Exception as exc:
+            self.logger.debug(f"AI data provider import failed: {exc}")
+            return
+
+        try:
+            from core.integrated_data_manager import get_integrated_data_manager
+            idm = get_integrated_data_manager()
+        except Exception as exc:
+            self.logger.debug(f"Integrated data manager unavailable for AI context: {exc}")
+            idm = None
+
+        try:
+            self.ai_data_provider = get_ai_bot_data_provider(idm)
+            if self.ai_data_provider is None:
+                return
+
+            symbol = self._normalise_symbol_for_provider(self.parameters.get('pair', 'BTC/USDT'))
+            snapshot = self.ai_data_provider.get_last_snapshot()
+            if not snapshot:
+                try:
+                    snapshot = await self.ai_data_provider.manual_refresh([symbol])
+                except Exception as exc:
+                    self.logger.debug(f"AI snapshot refresh failed: {exc}")
+                    snapshot = None
+            self.latest_ai_snapshot = snapshot
+        except Exception as exc:
+            self.logger.debug(f"Unable to attach AI data provider: {exc}")
+            self.ai_data_provider = None
+            self.latest_ai_snapshot = None
+
     async def _initialize_ml_model(self):
         """Inicjalizacja modelu ML"""
         try:

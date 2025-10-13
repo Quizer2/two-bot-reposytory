@@ -1,253 +1,266 @@
-"""
-Moduł zarządzania konfiguracją API dla różnych giełd
+"""Zarządzanie konfiguracją kluczy API dla giełd."""
 
-Umożliwia bezpieczne przechowywanie i zarządzanie kluczami API
-dla różnych giełd kryptowalut.
-"""
+from __future__ import annotations
 
 import json
-import os
-from typing import Dict, Optional, Any
 from pathlib import Path
+from typing import Any, Dict, Optional
 
-from utils.encryption import EncryptionManager
-from utils.logger import get_logger, LogType
 from utils.config_manager import get_config_manager
+from utils.encryption import EncryptionManager
 from utils.event_bus import publish as publish_event
+from utils.logger import LogType, get_logger
+
+CREDENTIALS_FILE = Path("config/exchange_credentials.json")
 
 
 class APIConfigManager:
-    """Manager konfiguracji API dla giełd"""
-    
-    def __init__(self):
+    """Manager konfiguracji API – obsługuje tryb szyfrowany i plaintext."""
+
+    def __init__(self) -> None:
         self.logger = get_logger("api_config", LogType.SYSTEM)
         self.config_manager = get_config_manager()
-        self.encryption_manager = None
-        
-        # Ścieżka do pliku z konfiguracją API
+        self.encryption_manager: Optional[EncryptionManager] = None
+
         self.config_dir = Path("config")
-        self.config_dir.mkdir(exist_ok=True)
+        self.config_dir.mkdir(parents=True, exist_ok=True)
         self.api_config_file = self.config_dir / "api_keys.encrypted"
-        
-        # Domyślna konfiguracja
-        self.default_config = {
-            "binance": {
-                "api_key": "",
-                "secret": "",
-                "sandbox": True,
-                "enabled": False
-            },
-            "bybit": {
-                "api_key": "",
-                "secret": "",
-                "sandbox": True,
-                "enabled": False
-            },
+
+        self.default_config: Dict[str, Dict[str, Any]] = {
+            "binance": {"api_key": "", "secret": "", "sandbox": True, "enabled": False},
+            "bybit": {"api_key": "", "secret": "", "sandbox": True, "enabled": False},
             "kucoin": {
                 "api_key": "",
                 "secret": "",
                 "passphrase": "",
                 "sandbox": True,
-                "enabled": False
+                "enabled": False,
             },
             "coinbase": {
                 "api_key": "",
                 "secret": "",
                 "passphrase": "",
                 "sandbox": True,
-                "enabled": False
+                "enabled": False,
             },
-            "kraken": {
-                "api_key": "",
-                "secret": "",
-                "sandbox": True,
-                "enabled": False
-            },
-            "bitfinex": {
-                "api_key": "",
-                "secret": "",
-                "sandbox": True,
-                "enabled": False
-            }
+            "kraken": {"api_key": "", "secret": "", "sandbox": True, "enabled": False},
+            "bitfinex": {"api_key": "", "secret": "", "sandbox": True, "enabled": False},
         }
-        
-        self.api_config = self.default_config.copy()
 
+        self.api_config: Dict[str, Dict[str, Any]] = {
+            exchange: cfg.copy() for exchange, cfg in self.default_config.items()
+        }
+
+    # ------------------------------------------------------------------
+    # Persistence helpers
+    # ------------------------------------------------------------------
     def _emit_audit(self, event: str, payload: Dict[str, Any]) -> None:
         try:
-            publish_event("security." + event, payload)
+            publish_event(f"security.{event}", payload)
         except Exception:
             pass
-    
+
+    def _plain_payload(self) -> Dict[str, Dict[str, Any]]:
+        payload: Dict[str, Dict[str, Any]] = {}
+        for exchange, cfg in self.api_config.items():
+            payload[exchange] = {
+                "api_key": cfg.get("api_key", ""),
+                "secret": cfg.get("secret", ""),
+                "password": cfg.get("passphrase") or cfg.get("password", ""),
+                "sandbox": bool(cfg.get("sandbox", False)),
+                "enabled": bool(cfg.get("enabled", False)),
+                "options": cfg.get("options", {}),
+            }
+        return payload
+
+    def _persist_plaintext_credentials(self) -> None:
+        try:
+            CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with CREDENTIALS_FILE.open("w", encoding="utf-8") as handle:
+                json.dump(self._plain_payload(), handle, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            self.logger.error(f"Błąd zapisu credentials JSON: {exc}")
+            raise
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def initialize_encryption(self, master_password: str) -> bool:
-        """Inicjalizuje szyfrowanie z hasłem głównym"""
         try:
             self.encryption_manager = EncryptionManager(master_password)
             return True
-        except Exception as e:
-            self.logger.error(f"Błąd inicjalizacji szyfrowania: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd inicjalizacji szyfrowania: {exc}")
             return False
-    
+
     def load_api_config(self) -> bool:
-        """Ładuje zaszyfrowaną konfigurację API"""
         try:
-            if not self.encryption_manager:
-                self.logger.warning("Encryption manager nie jest zainicjalizowany")
-                return False
-            
+            if self.encryption_manager is None:
+                if CREDENTIALS_FILE.exists():
+                    with CREDENTIALS_FILE.open("r", encoding="utf-8") as handle:
+                        plaintext = json.load(handle)
+                    for exchange, cfg in plaintext.items():
+                        if exchange in self.api_config:
+                            merged = self.api_config[exchange].copy()
+                            merged.update(
+                                {
+                                    "api_key": cfg.get("api_key", ""),
+                                    "secret": cfg.get("secret", ""),
+                                    "passphrase": cfg.get("password", ""),
+                                    "sandbox": cfg.get("sandbox", merged.get("sandbox", False)),
+                                    "enabled": cfg.get("enabled", merged.get("enabled", False)),
+                                    "options": cfg.get("options", merged.get("options", {})),
+                                }
+                            )
+                            self.api_config[exchange] = merged
+                    self.logger.info("Konfiguracja API załadowana z pliku plaintext")
+                    return True
+                self.logger.warning(
+                    "Encryption manager nie jest zainicjalizowany – używam konfiguracji domyślnej"
+                )
+                return True
+
             if not self.api_config_file.exists():
                 self.logger.info("Plik konfiguracji API nie istnieje, używam domyślnej")
                 return True
-            
-            # Odczytaj zaszyfrowane dane
+
             encrypted_data = self.api_config_file.read_bytes()
-            
-            # Odszyfruj
-            decrypted_data = self.encryption_manager.decrypt_data(encrypted_data)
-            
-            # Parsuj JSON
-            self.api_config = json.loads(decrypted_data)
-            
-            # Sprawdź czy wszystkie wymagane klucze istnieją
-            for exchange in self.default_config:
-                if exchange not in self.api_config:
-                    self.api_config[exchange] = self.default_config[exchange].copy()
-            
+            decrypted = self.encryption_manager.decrypt_data(encrypted_data)
+            payload = json.loads(decrypted)
+            if not isinstance(payload, dict):
+                raise ValueError("Niepoprawny format zaszyfrowanej konfiguracji API")
+
+            for exchange, default in self.default_config.items():
+                merged = default.copy()
+                merged.update(payload.get(exchange, {}))
+                self.api_config[exchange] = merged
+
+            self._persist_plaintext_credentials()
             self.logger.info("Konfiguracja API załadowana pomyślnie")
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Błąd ładowania konfiguracji API: {e}")
-            self.api_config = self.default_config.copy()
+
+        except Exception as exc:
+            self.logger.error(f"Błąd ładowania konfiguracji API: {exc}")
+            self.api_config = {exchange: cfg.copy() for exchange, cfg in self.default_config.items()}
+            try:
+                self._persist_plaintext_credentials()
+            except Exception:
+                pass
             return False
-    
+
     def save_api_config(self) -> bool:
-        """Zapisuje zaszyfrowaną konfigurację API"""
         try:
-            if not self.encryption_manager:
-                self.logger.error("Encryption manager nie jest zainicjalizowany")
-                return False
-            
-            # Konwertuj do JSON
-            json_data = json.dumps(self.api_config, indent=2)
-            
-            # Zaszyfruj
-            encrypted_data = self.encryption_manager.encrypt_data(json_data)
-            
-            # Zapisz do pliku
-            self.api_config_file.write_bytes(encrypted_data)
-            
+            if self.encryption_manager is None:
+                self.logger.warning(
+                    "Encryption manager nie jest zainicjalizowany – zapisuję konfigurację w pliku plaintext"
+                )
+                self._persist_plaintext_credentials()
+                return True
+
+            payload = json.dumps(self.api_config, indent=2)
+            encrypted = self.encryption_manager.encrypt_data(payload)
+            self.api_config_file.write_bytes(encrypted)
+            self._persist_plaintext_credentials()
             self.logger.info("Konfiguracja API zapisana pomyślnie")
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Błąd zapisywania konfiguracji API: {e}")
+
+        except Exception as exc:
+            self.logger.error(f"Błąd zapisywania konfiguracji API: {exc}")
+            try:
+                self._persist_plaintext_credentials()
+            except Exception:
+                pass
             return False
-    
+
     def get_exchange_config(self, exchange: str) -> Optional[Dict[str, Any]]:
-        """Pobiera konfigurację dla konkretnej giełdy"""
         return self.api_config.get(exchange.lower())
-    
+
     def set_exchange_config(self, exchange: str, config: Dict[str, Any]) -> bool:
-        """Ustawia konfigurację dla konkretnej giełdy"""
         try:
             exchange = exchange.lower()
-            
             if exchange not in self.default_config:
                 self.logger.error(f"Nieznana giełda: {exchange}")
                 return False
-            
-            # Waliduj wymagane pola
-            required_fields = list(self.default_config[exchange].keys())
-            for field in required_fields:
-                if field not in config:
-                    self.logger.error(f"Brakuje pola {field} dla giełdy {exchange}")
-                    return False
-            
+
+            required_fields = set(self.default_config[exchange].keys())
+            missing = required_fields - set(config.keys())
+            if missing:
+                self.logger.error(f"Brakuje pól {sorted(missing)} dla giełdy {exchange}")
+                return False
+
             prev = self.api_config.get(exchange, {}).copy()
             self.api_config[exchange] = config
             ok = self.save_api_config()
             if ok:
-                # Audyt bez sekretów
-                self._emit_audit("keys.updated", {
-                    "exchange": exchange,
-                    "enabled": bool(config.get("enabled")),
-                    "sandbox": bool(config.get("sandbox")),
-                    "had_prev": bool(prev.get("api_key") or prev.get("secret") or prev.get("passphrase")),
-                    "has_new": bool(config.get("api_key") or config.get("secret") or config.get("passphrase")),
-                })
+                self._emit_audit(
+                    "keys.updated",
+                    {
+                        "exchange": exchange,
+                        "enabled": bool(config.get("enabled")),
+                        "sandbox": bool(config.get("sandbox")),
+                        "had_prev": bool(prev.get("api_key") or prev.get("secret") or prev.get("passphrase")),
+                        "has_new": bool(config.get("api_key") or config.get("secret") or config.get("passphrase")),
+                    },
+                )
             return ok
-            
-        except Exception as e:
-            self.logger.error(f"Błąd ustawiania konfiguracji dla {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd ustawiania konfiguracji dla {exchange}: {exc}")
             return False
-    
+
     def enable_exchange(self, exchange: str) -> bool:
-        """Włącza giełdę"""
         try:
             exchange = exchange.lower()
             if exchange in self.api_config:
-                prev = bool(self.api_config[exchange].get("enabled"))
+                previously_enabled = bool(self.api_config[exchange].get("enabled"))
                 self.api_config[exchange]["enabled"] = True
                 ok = self.save_api_config()
-                if ok and not prev:
+                if ok and not previously_enabled:
                     self._emit_audit("exchange.enabled", {"exchange": exchange})
                 return ok
             return False
-        except Exception as e:
-            self.logger.error(f"Błąd włączania giełdy {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd włączania giełdy {exchange}: {exc}")
             return False
-    
+
     def disable_exchange(self, exchange: str) -> bool:
-        """Wyłącza giełdę"""
         try:
             exchange = exchange.lower()
             if exchange in self.api_config:
-                prev = bool(self.api_config[exchange].get("enabled"))
+                previously_enabled = bool(self.api_config[exchange].get("enabled"))
                 self.api_config[exchange]["enabled"] = False
                 ok = self.save_api_config()
-                if ok and prev:
+                if ok and previously_enabled:
                     self._emit_audit("exchange.disabled", {"exchange": exchange})
                 return ok
             return False
-        except Exception as e:
-            self.logger.error(f"Błąd wyłączania giełdy {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd wyłączania giełdy {exchange}: {exc}")
             return False
-    
-    def get_enabled_exchanges(self) -> list:
-        """Zwraca listę włączonych giełd"""
+
+    def get_enabled_exchanges(self) -> list[str]:
         return [
-            exchange for exchange, config in self.api_config.items()
-            if config.get("enabled", False) and config.get("api_key", "").strip()
+            exchange
+            for exchange, cfg in self.api_config.items()
+            if cfg.get("enabled") and cfg.get("api_key", "").strip()
         ]
-    
+
     def validate_exchange_config(self, exchange: str) -> bool:
-        """Waliduje konfigurację giełdy"""
         try:
-            config = self.get_exchange_config(exchange)
-            if not config:
+            cfg = self.get_exchange_config(exchange)
+            if not cfg:
                 return False
-            
-            # Sprawdź czy API key i secret są ustawione
-            if not config.get("api_key", "").strip():
+            if not cfg.get("api_key", "").strip():
                 return False
-            
-            if not config.get("secret", "").strip():
+            if not cfg.get("secret", "").strip():
                 return False
-            
-            # Dla KuCoin i Coinbase sprawdź passphrase
-            if exchange.lower() in ["kucoin", "coinbase"]:
-                if not config.get("passphrase", "").strip():
-                    return False
-            
+            if exchange.lower() in {"kucoin", "coinbase"} and not cfg.get("passphrase", "").strip():
+                return False
             return True
-            
-        except Exception as e:
-            self.logger.error(f"Błąd walidacji konfiguracji {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd walidacji konfiguracji {exchange}: {exc}")
             return False
-    
+
     def clear_exchange_config(self, exchange: str) -> bool:
-        """Czyści konfigurację giełdy (przywraca domyślną)"""
         try:
             exchange = exchange.lower()
             if exchange in self.default_config:
@@ -257,12 +270,11 @@ class APIConfigManager:
                     self._emit_audit("keys.cleared", {"exchange": exchange})
                 return ok
             return False
-        except Exception as e:
-            self.logger.error(f"Błąd czyszczenia konfiguracji {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd czyszczenia konfiguracji {exchange}: {exc}")
             return False
-    
+
     def remove_exchange_config(self, exchange: str) -> bool:
-        """Usuwa konfigurację giełdy całkowicie"""
         try:
             exchange = exchange.lower()
             if exchange in self.api_config:
@@ -272,39 +284,35 @@ class APIConfigManager:
                     self._emit_audit("keys.removed", {"exchange": exchange})
                 return ok
             return False
-        except Exception as e:
-            self.logger.error(f"Błąd usuwania konfiguracji {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd usuwania konfiguracji {exchange}: {exc}")
             return False
-    
-    def get_all_exchanges(self) -> list:
-        """Zwraca listę wszystkich dostępnych giełd"""
-        return list(self.default_config.keys())
-    
-    def get_available_exchanges(self) -> list:
-        """Zwraca listę wszystkich dostępnych giełd (alias dla get_all_exchanges)"""
-        return self.get_all_exchanges()
-    
-    def is_production_ready(self) -> bool:
-        """Sprawdza czy aplikacja jest gotowa do trybu produkcyjnego"""
-        enabled_exchanges = self.get_enabled_exchanges()
-        
-        if not enabled_exchanges:
-            return False
-        
-        # Sprawdź czy przynajmniej jedna giełda ma poprawną konfigurację
-        for exchange in enabled_exchanges:
-            if self.validate_exchange_config(exchange):
-                return True
-        
-        return False
 
-    # --- key rotation helper (no secrets in payload) ---
-    def rotate_keys(self, exchange: str, *, keep_enabled: Optional[bool] = None, sandbox: Optional[bool] = None) -> bool:
+    def get_all_exchanges(self) -> list[str]:
+        return list(self.default_config.keys())
+
+    def get_available_exchanges(self) -> list[str]:
+        return self.get_all_exchanges()
+
+    def is_production_ready(self) -> bool:
+        enabled = self.get_enabled_exchanges()
+        if not enabled:
+            return False
+        return any(self.validate_exchange_config(exchange) for exchange in enabled)
+
+    def rotate_keys(
+        self,
+        exchange: str,
+        *,
+        keep_enabled: Optional[bool] = None,
+        sandbox: Optional[bool] = None,
+    ) -> bool:
         try:
             exchange = exchange.lower()
             if exchange not in self.api_config:
                 self.logger.error(f"Nieznana giełda: {exchange}")
                 return False
+
             cfg = self.api_config[exchange]
             cfg["api_key"] = ""
             cfg["secret"] = ""
@@ -316,19 +324,28 @@ class APIConfigManager:
                 cfg["sandbox"] = bool(sandbox)
             ok = self.save_api_config()
             if ok:
-                self._emit_audit("keys.rotated", {"exchange": exchange, "enabled": bool(cfg.get("enabled")), "sandbox": bool(cfg.get("sandbox"))})
+                self._emit_audit(
+                    "keys.rotated",
+                    {
+                        "exchange": exchange,
+                        "enabled": bool(cfg.get("enabled")),
+                        "sandbox": bool(cfg.get("sandbox")),
+                    },
+                )
             return ok
-        except Exception as e:
-            self.logger.error(f"Błąd rotacji kluczy {exchange}: {e}")
+        except Exception as exc:
+            self.logger.error(f"Błąd rotacji kluczy {exchange}: {exc}")
             return False
 
 
-# Singleton instance
-_api_config_manager = None
+_api_config_manager: Optional[APIConfigManager] = None
+
 
 def get_api_config_manager() -> APIConfigManager:
-    """Zwraca singleton instance API Config Manager"""
+    """Zwraca singleton instance API Config Manager."""
+
     global _api_config_manager
     if _api_config_manager is None:
         _api_config_manager = APIConfigManager()
     return _api_config_manager
+

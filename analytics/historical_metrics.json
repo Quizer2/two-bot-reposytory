@@ -1,0 +1,30 @@
+{
+  "bots": {
+    "1": {
+      "daily_pnl": 420.5,
+      "daily_loss": 180.0,
+      "daily_profit": 600.5,
+      "max_drawdown": 9.5,
+      "current_drawdown": 2.3,
+      "win_rate": 0.62,
+      "profit_factor": 1.8,
+      "sharpe_ratio": 1.45,
+      "var_95": 280.0,
+      "exposure": 0.4,
+      "correlation_risk": 0.35
+    },
+    "2": {
+      "daily_pnl": 880.0,
+      "daily_loss": 250.0,
+      "daily_profit": 1130.0,
+      "max_drawdown": 11.0,
+      "current_drawdown": 3.1,
+      "win_rate": 0.57,
+      "profit_factor": 1.6,
+      "sharpe_ratio": 1.25,
+      "var_95": 360.0,
+      "exposure": 0.55,
+      "correlation_risk": 0.48
+    }
+  }
+}

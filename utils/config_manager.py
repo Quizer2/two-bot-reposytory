@@ -6,9 +6,11 @@ plików konfiguracyjnych aplikacji.
 """
 
 import json
-import os
+import threading
+from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass
 import copy
 import logging
@@ -49,6 +51,10 @@ class ConfigManager:
         
         # EventBus dla powiadomień o zmianach konfiguracji
         self.event_bus = get_event_bus()
+
+        # Lokalni listenerzy (namespace -> callbacks)
+        self._listeners = defaultdict(list)  # type: Dict[str, List[Callable]]
+        self._listener_lock = threading.RLock()
     
     def _get_default_app_config(self) -> Dict[str, Any]:
         """Zwraca domyślną konfigurację aplikacji"""
@@ -292,15 +298,19 @@ class ConfigManager:
                     config_type
                 )
             
+            timestamp = self._get_timestamp()
             logger.info(f"Configuration {config_type} saved successfully")
             # Powiadom o zmianie konfiguracji
-            logger.info(f"TRACE: config.updated - type={config_type}, timestamp={self._get_timestamp()}")
-            self.event_bus.publish(EventTypes.CONFIG_UPDATED, {
-                'config_type': config_type,
-                'old_config': old_config,
-                'new_config': config.copy(),
-                'timestamp': self._get_timestamp()
-            })
+            logger.info(f"TRACE: config.updated - type={config_type}, timestamp={timestamp}")
+            self.event_bus.publish(
+                EventTypes.CONFIG_UPDATED,
+                {
+                    'config_type': config_type,
+                    'old_config': old_config,
+                    'new_config': copy.deepcopy(config),
+                    'timestamp': timestamp
+                }
+            )
             
         except Exception as e:
             logger.error(f"Error saving configuration {config_type}: {e}")
@@ -364,31 +374,24 @@ class ConfigManager:
         try:
             if config_type == "app":
                 config = self.get_app_config()
-                # For app config, prepend 'app.' to the path to navigate to the app section
-                if not path.startswith('app.'):
-                    path = f"app.{path}"
+                keys = self._split_path(path)
+                if keys and keys[0] == "app":
+                    keys = keys[1:]
             elif config_type == "ui":
                 config = self.get_ui_config()
-                # For UI config, the structure is flat, so no need to prepend
+                keys = self._split_path(path)
             else:
-                return default
-            
-            # Nawiguj przez ścieżkę
-            keys = path.split('.')
-            value = config
-            
-            for key in keys:
-                if isinstance(value, dict) and key in value:
-                    value = value[key]
-                else:
-                    return default
-            
-            return value
-            
+                # Traktuj config_type jako sekcję w konfiguracji aplikacji
+                config = self.get_app_config()
+                section_path = f"{config_type}.{path}" if path else config_type
+                keys = self._split_path(section_path)
+
+            return self._resolve_path(config, keys, default)
+
         except Exception:
             return default
-    
-    def set_setting(self, config_type: str, path: str, value: Any):
+
+    def set_setting(self, config_type: str, path: str, value: Any, meta: Optional[Dict[str, Any]] = None):
         """
         Ustawia konkretne ustawienie w konfiguracji
         
@@ -398,40 +401,71 @@ class ConfigManager:
             value: Nowa wartość
         """
         try:
+            target_type = config_type if config_type in ("app", "ui") else "app"
+            config = self.get_app_config() if target_type == "app" else self.get_ui_config()
+
             if config_type == "app":
-                config = self.get_app_config()
-                # For app config, prepend 'app.' to the path to navigate to the app section
-                if not path.startswith('app.'):
-                    path = f"app.{path}"
+                keys = self._split_path(path)
+                if keys and keys[0] == "app":
+                    keys = keys[1:]
             elif config_type == "ui":
-                config = self.get_ui_config()
-                # For UI config, the structure is flat, so no need to prepend
+                keys = self._split_path(path)
             else:
+                section_path = f"{config_type}.{path}" if path else config_type
+                keys = self._split_path(section_path)
+
+            if not keys:
                 raise ConfigValidationError(
-                    f"Invalid config type: {config_type}",
-                    config_type
+                    "Invalid configuration path provided",
+                    config_type,
+                    path
                 )
-            
-            # Pobierz starą wartość dla porównania
-            old_value = self.get_setting(config_type, path.replace('app.', '') if path.startswith('app.') else path)
-            
-            # Nawiguj przez ścieżkę i ustaw wartość
-            keys = path.split('.')
+
+            old_value = self.get_setting(config_type, path, None)
+
             current = config
-            
             for key in keys[:-1]:
-                if key not in current:
+                if key not in current or not isinstance(current[key], dict):
                     current[key] = {}
                 current = current[key]
-            
+
             current[keys[-1]] = value
-            
+
             # Zapisz konfigurację (to wywoła EventBus notification)
-            self.save_config(config_type, config)
-            
-            # Dodatkowe powiadomienie o konkretnej zmianie ustawienia
-            logger.trace(f"Setting {config_type}.{path} changed from {old_value} to {value}")
-            
+            self.save_config(target_type, config)
+
+            event_path = '.'.join(keys)
+            namespace = self._infer_namespace(target_type, event_path)
+            meta_payload = dict(meta or {})
+            meta_payload.setdefault('by', 'ui')
+            meta_payload.setdefault('ts', datetime.now(timezone.utc).isoformat())
+
+            logger.info(
+                "TRACE: config.%s.updated - path=%s old=%s new=%s",
+                namespace,
+                event_path,
+                old_value,
+                value
+            )
+
+            payload = {
+                'config_type': target_type,
+                'path': event_path,
+                'value': value,
+                'old_value': old_value,
+                'meta': meta_payload,
+                'namespace': namespace
+            }
+
+            self._notify_listeners(namespace, event_path, value, meta_payload)
+
+            event_name = {
+                'risk': EventTypes.CONFIG_RISK_UPDATED,
+                'ui': EventTypes.CONFIG_UI_UPDATED
+            }.get(namespace, EventTypes.CONFIG_APP_UPDATED)
+
+            self.event_bus.publish(event_name, payload)
+
         except Exception as e:
             if not isinstance(e, ConfigValidationError):
                 raise ConfigValidationError(
@@ -640,8 +674,52 @@ class ConfigManager:
     
     def _get_timestamp(self) -> str:
         """Zwraca aktualny timestamp"""
-        from datetime import datetime
-        return datetime.now().isoformat()
+        return datetime.now(timezone.utc).isoformat()
+
+    def _split_path(self, path: str) -> List[str]:
+        return [segment for segment in path.split('.') if segment]
+
+    def _resolve_path(self, config: Dict[str, Any], keys: List[str], default: Any) -> Any:
+        value: Any = config
+        for key in keys:
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return default
+        return value
+
+    def _infer_namespace(self, config_type: str, path: str) -> str:
+        lowered = path.lower()
+        if "risk" in lowered:
+            return "risk"
+        if config_type == "ui":
+            return "ui"
+        return "app"
+
+    def register_listener(self, namespace: str, callback: Callable[[str, Any, Dict[str, Any]], None]) -> None:
+        """Rejestruje lokalnego listenera zmian konfiguracji"""
+        with self._listener_lock:
+            callbacks = self._listeners[namespace]
+            if callback not in callbacks:
+                callbacks.append(callback)
+
+    def unregister_listener(self, namespace: str, callback: Callable[[str, Any, Dict[str, Any]], None]) -> None:
+        """Usuwa listenera ze wskazanego namespace"""
+        with self._listener_lock:
+            callbacks = self._listeners.get(namespace, [])
+            if callback in callbacks:
+                callbacks.remove(callback)
+
+    def _notify_listeners(self, namespace: str, path: str, value: Any, meta: Dict[str, Any]) -> None:
+        listeners: List[Callable[[str, Any, Dict[str, Any]], None]]
+        with self._listener_lock:
+            listeners = list(self._listeners.get(namespace, []))
+
+        for callback in listeners:
+            try:
+                callback(path, value, meta)
+            except Exception:
+                logger.exception("Notify listener error for %s", namespace)
     
     def subscribe_to_config_changes(self, callback):
         """

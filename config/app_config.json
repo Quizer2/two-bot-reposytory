@@ -55,15 +55,40 @@
     "paper_trading": false,
     "slippage_tolerance_percent": 0.5,
     "enabled": true,
-    "mode": "live",
+    "mode": "auto",
     "default_exchange": "coinbase",
     "updated_at": "2025-09-30T20:19:47.662321",
     "risk_management": {
-      "max_daily_loss": -100.0,
-      "max_position_size": 0,
-      "stop_loss_percentage": 150.0,
-      "take_profit_percentage": -5.0,
-      "max_open_positions": -1
+      "max_daily_loss": 500.0,
+      "max_position_size": 1000.0,
+      "stop_loss_percentage": 5.0,
+      "take_profit_percentage": 10.0,
+      "max_open_positions": 3
+    },
+    "rate_limiting": {
+      "global": {
+        "limit": 90,
+        "period": 60,
+        "warning_threshold": 0.75
+      },
+      "per_symbol_default": {
+        "limit": 30,
+        "period": 60,
+        "warning_threshold": 0.8
+      },
+      "per_symbol": {
+        "BTCUSDT": {
+          "limit": 20,
+          "period": 60,
+          "warning_threshold": 0.8
+        },
+        "ETHUSDT": {
+          "limit": 15,
+          "period": 60,
+          "warning_threshold": 0.85
+        }
+      },
+      "updated_at": "2025-10-13T19:32:36.139118"
     }
   },
   "test_section": {

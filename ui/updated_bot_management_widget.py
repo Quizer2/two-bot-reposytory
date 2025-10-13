@@ -402,11 +402,12 @@ class UpdatedBotManagementWidget(QWidget):
         self.integrated_data_manager = integrated_data_manager
         self.config_manager = get_config_manager()
         self.logger = get_logger("updated_bot_management", LogType.USER)
-        
+
         # Dane botów
         self.bots_data = {}
         self.bot_cards = {}
-        
+        self.ai_last_snapshot = None
+
         # Timer odświeżania
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_data)
@@ -438,12 +439,18 @@ class UpdatedBotManagementWidget(QWidget):
         add_bot_btn.setObjectName("actionButton")
         add_bot_btn.clicked.connect(self.add_new_bot)
         header_layout.addWidget(add_bot_btn)
-        
+
+        refresh_ai_btn = QPushButton("🔄 Odśwież dane AI")
+        refresh_ai_btn.setObjectName("actionButton")
+        refresh_ai_btn.clicked.connect(self.trigger_ai_refresh)
+        header_layout.addWidget(refresh_ai_btn)
+        self.refresh_ai_btn = refresh_ai_btn
+
         start_all_btn = QPushButton("▶️ Start Wszystkie")
         start_all_btn.setObjectName("actionButton")
         start_all_btn.clicked.connect(self.start_all_bots)
         header_layout.addWidget(start_all_btn)
-        
+
         stop_all_btn = QPushButton("⏸️ Stop Wszystkie")
         stop_all_btn.setObjectName("actionButton")
         stop_all_btn.clicked.connect(self.stop_all_bots)
@@ -453,10 +460,13 @@ class UpdatedBotManagementWidget(QWidget):
         
         # Statystyki
         self.setup_stats_section(layout)
-        
+
+        # Panel danych AI
+        self.setup_ai_insights_section(layout)
+
         # Boty
         self.setup_bots_section(layout)
-    
+
     def setup_stats_section(self, parent_layout):
         """Konfiguracja sekcji statystyk"""
         stats_frame = QFrame()
@@ -485,6 +495,102 @@ class UpdatedBotManagementWidget(QWidget):
         stats_layout.addWidget(pnl_card)
         
         parent_layout.addWidget(stats_frame)
+
+    def setup_ai_insights_section(self, parent_layout):
+        ai_group = QGroupBox("Panel danych AI bota")
+        ai_group.setObjectName("aiInsightsGroup")
+        ai_layout = QVBoxLayout(ai_group)
+        ai_layout.setSpacing(10)
+        ai_layout.setContentsMargins(15, 15, 15, 15)
+
+        self.ai_status_label = QLabel("Oczekiwanie na dane AI ...")
+        self.ai_status_label.setObjectName("aiStatusLabel")
+        ai_layout.addWidget(self.ai_status_label)
+
+        self.ai_price_table = QTableWidget(0, 6)
+        self.ai_price_table.setObjectName("aiPriceTable")
+        self.ai_price_table.setHorizontalHeaderLabels([
+            "Symbol",
+            "Cena",
+            "Bid",
+            "Ask",
+            "Zmiana 24h",
+            "Wolumen 24h",
+        ])
+        self.ai_price_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_price_table.verticalHeader().setVisible(False)
+        self.ai_price_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        ai_layout.addWidget(self.ai_price_table)
+
+        self.ai_risk_table = QTableWidget(0, 6)
+        self.ai_risk_table.setObjectName("aiRiskTable")
+        self.ai_risk_table.setHorizontalHeaderLabels([
+            "Bot",
+            "Symbol",
+            "Ryzyko",
+            "Max DD",
+            "VaR 95%",
+            "Ekspozycja",
+        ])
+        self.ai_risk_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_risk_table.verticalHeader().setVisible(False)
+        self.ai_risk_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        ai_layout.addWidget(self.ai_risk_table)
+
+        self.ai_indicator_table = QTableWidget(0, 7)
+        self.ai_indicator_table.setObjectName("aiIndicatorTable")
+        self.ai_indicator_table.setHorizontalHeaderLabels([
+            "Symbol",
+            "Trend",
+            "Siła trendu",
+            "RSI",
+            "MACD",
+            "ATR",
+            "Zmienność",
+        ])
+        self.ai_indicator_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_indicator_table.verticalHeader().setVisible(False)
+        self.ai_indicator_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        ai_layout.addWidget(self.ai_indicator_table)
+
+        self.ai_feature_table = QTableWidget(0, 9)
+        self.ai_feature_table.setObjectName("aiFeatureTable")
+        self.ai_feature_table.setHorizontalHeaderLabels([
+            "Bot",
+            "Symbol",
+            "Cena",
+            "RSI",
+            "ATR",
+            "VaR 95%",
+            "Ekspozycja",
+            "Strategie",
+            "Pewność",
+        ])
+        self.ai_feature_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_feature_table.verticalHeader().setVisible(False)
+        self.ai_feature_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        ai_layout.addWidget(self.ai_feature_table)
+
+        self.ai_risk_events = QTreeWidget()
+        self.ai_risk_events.setObjectName("aiRiskEvents")
+        self.ai_risk_events.setHeaderLabels([
+            "Bot",
+            "Poziom",
+            "Typ",
+            "Wiadomość",
+            "Czas",
+        ])
+        self.ai_risk_events.setRootIsDecorated(False)
+        ai_layout.addWidget(self.ai_risk_events)
+
+        self.ai_recommendations = QTextEdit()
+        self.ai_recommendations.setObjectName("aiRecommendations")
+        self.ai_recommendations.setReadOnly(True)
+        self.ai_recommendations.setPlaceholderText("Rekomendacje AI oraz wykryte anomalie pojawią się tutaj")
+        ai_layout.addWidget(self.ai_recommendations)
+
+        parent_layout.addWidget(ai_group)
+        self.ai_group_box = ai_group
     
     def create_stat_card(self, title: str, value: str, color: str) -> QWidget:
         """Utwórz kartę statystyki"""
@@ -543,6 +649,207 @@ class UpdatedBotManagementWidget(QWidget):
         self.integrated_data_manager.subscribe_to_ui_updates(
             'strategy_signal', self.on_strategy_signal
         )
+        self.integrated_data_manager.subscribe_to_ui_updates(
+            'ai_snapshot', self.on_ai_snapshot
+        )
+
+    def on_ai_snapshot(self, snapshot):
+        try:
+            if snapshot is None:
+                return
+
+            def _apply():
+                try:
+                    self.ai_last_snapshot = snapshot
+                    self._update_ai_insights(snapshot)
+                except Exception as exc:
+                    self.logger.error(f"Error applying AI snapshot: {exc}")
+
+            if QThread.currentThread() != self.thread():
+                QTimer.singleShot(0, _apply)
+            else:
+                _apply()
+
+        except Exception as e:
+            self.logger.error(f"Error processing AI snapshot: {e}")
+
+    def _update_ai_insights(self, snapshot: Dict[str, Any]):
+        try:
+            generated_at = snapshot.get('generated_at', '')
+            sentiment = snapshot.get('market_sentiment', 'unknown')
+            learning = snapshot.get('learning', {}) or {}
+            datasets = learning.get('dataset_count', 0)
+            features = learning.get('feature_count', 0)
+            status_parts = [
+                f"Ostatnia aktualizacja: {generated_at}",
+                f"Sentiment: {sentiment}",
+                f"Zestawy danych: {datasets}",
+                f"Cechy: {features}",
+            ]
+            equity_summary = learning.get('equity_summary') or {}
+            if equity_summary:
+                status_parts.append(
+                    f"Sharpe: {equity_summary.get('sharpe', 0.0)} | Max DD: {equity_summary.get('max_drawdown', 0.0)}"
+                )
+            strategy_catalog = snapshot.get('strategy_catalog', []) or []
+            if strategy_catalog:
+                active_count = sum(1 for entry in strategy_catalog if entry.get('active'))
+                status_parts.append(f"Strategie aktywne: {active_count}/{len(strategy_catalog)}")
+            self.ai_status_label.setText(" | ".join(status_parts))
+
+            # Aktualizacja tabeli cen
+            market_overview = snapshot.get('market_overview', []) or []
+            self.ai_price_table.setRowCount(len(market_overview))
+            for row, entry in enumerate(market_overview):
+                values = [
+                    entry.get('symbol', ''),
+                    f"{entry.get('price', 0.0):,.2f}",
+                    f"{entry.get('bid', 0.0):,.2f}",
+                    f"{entry.get('ask', 0.0):,.2f}",
+                    f"{entry.get('change_24h_percent', 0.0):.2f}%",
+                    f"{entry.get('volume_24h', 0.0):,.0f}",
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    if col > 0:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.ai_price_table.setItem(row, col, item)
+
+            # Aktualizacja tabeli ryzyka
+            risk_entries = snapshot.get('risk_metrics', []) or []
+            self.ai_risk_table.setRowCount(len(risk_entries))
+            for row, entry in enumerate(risk_entries):
+                values = [
+                    entry.get('name') or entry.get('bot_id', ''),
+                    entry.get('symbol', ''),
+                    entry.get('risk_level', 'unknown'),
+                    f"{entry.get('max_drawdown', entry.get('total_drawdown', 0.0)):.2f}%",
+                    f"{entry.get('var_95', 0.0):.2f}",
+                    f"{entry.get('exposure', entry.get('current_exposure', 0.0)):.2f}",
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    if col >= 3:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.ai_risk_table.setItem(row, col, item)
+
+            indicators = snapshot.get('technical_indicators', {}) or {}
+            indicator_items = list(indicators.items())
+            self.ai_indicator_table.setRowCount(len(indicator_items))
+            for row, (symbol, data) in enumerate(indicator_items):
+                values = [
+                    symbol,
+                    data.get('trend', ''),
+                    f"{data.get('trend_strength', 0.0):.2f}",
+                    f"{data.get('rsi', 0.0):.2f}" if data.get('rsi') is not None else '—',
+                    f"{data.get('macd', 0.0):.4f}" if data.get('macd') is not None else '—',
+                    f"{data.get('atr', 0.0):.4f}" if data.get('atr') is not None else '—',
+                    f"{data.get('volatility', 0.0):.4f}",
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    if col >= 2:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.ai_indicator_table.setItem(row, col, item)
+
+            features = snapshot.get('feature_matrix', []) or []
+            self.ai_feature_table.setRowCount(len(features))
+            for row, entry in enumerate(features):
+                strategy_summary = entry.get('strategy_summary') or []
+                strategy_names = []
+                for strategy in strategy_summary:
+                    name = strategy.get('name') or strategy.get('strategy_id')
+                    status = 'ON' if strategy.get('active') else 'OFF'
+                    strategy_names.append(f"{name} ({status})")
+                values = [
+                    entry.get('name', entry.get('bot_id', '')),
+                    entry.get('symbol', ''),
+                    f"{entry.get('price', 0.0):,.2f}" if entry.get('price') is not None else '—',
+                    f"{entry.get('rsi', 0.0):.2f}" if entry.get('rsi') is not None else '—',
+                    f"{entry.get('atr', 0.0):.4f}" if entry.get('atr') is not None else '—',
+                    f"{entry.get('var_95', 0.0):.2f}" if entry.get('var_95') is not None else '—',
+                    f"{entry.get('exposure', 0.0):.2f}" if entry.get('exposure') is not None else '—',
+                    "\n".join(strategy_names) if strategy_names else entry.get('strategy', ''),
+                    f"{(entry.get('strategy_confidence') or 0.0) * 100:.0f}%",
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    if col in (2, 3, 4, 5, 6, 8):
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.ai_feature_table.setItem(row, col, item)
+
+            self.ai_risk_events.clear()
+            risk_reports = snapshot.get('risk_reports', []) or []
+            for report in risk_reports:
+                bot_id = str(report.get('bot_id', ''))
+                level = report.get('recent_events', [{}])[-1].get('level', '') if report.get('recent_events') else ''
+                top_item = QTreeWidgetItem([
+                    bot_id,
+                    level,
+                    '',
+                    '',
+                    report.get('timestamp', ''),
+                ])
+                for event in report.get('recent_events', []) or []:
+                    child = QTreeWidgetItem([
+                        bot_id,
+                        event.get('level', ''),
+                        event.get('event_type', ''),
+                        event.get('message', ''),
+                        event.get('timestamp', ''),
+                    ])
+                    top_item.addChild(child)
+                self.ai_risk_events.addTopLevelItem(top_item)
+            self.ai_risk_events.expandAll()
+
+            # Sekcja rekomendacji i alertów
+            lines: List[str] = []
+            for rec in snapshot.get('strategy_recommendations', []) or []:
+                confidence = int(float(rec.get('confidence', 0.0)) * 100)
+                line = (
+                    f"[{rec.get('bot_name') or rec.get('bot_id')}] ({rec.get('symbol', 'N/A')}) "
+                    f"→ {rec.get('recommendation', '')} (pewność {confidence}%)"
+                )
+                lines.append(line)
+
+            spikes = snapshot.get('price_spikes', []) or []
+            if spikes:
+                lines.append("\nWykryte iglice cenowe:")
+                for spike in spikes:
+                    lines.append(
+                        f" - {spike.get('symbol')}: {spike.get('change_percent', 0.0):.2f}% ({spike.get('direction')})"
+                    )
+
+            correlations = snapshot.get('correlations', []) or []
+            if correlations:
+                lines.append("\nKorelacje (ostatnie 240 próbek):")
+                for corr in correlations[:5]:
+                    lines.append(
+                        f" - {corr.get('pair')}: {corr.get('correlation', 0.0):.2f} (n={corr.get('sample_size', 0)})"
+                    )
+
+            if not lines:
+                lines.append("Brak rekomendacji – czekam na dane z rynku.")
+
+            self.ai_recommendations.setPlainText("\n".join(lines))
+
+        except Exception as exc:
+            self.logger.error(f"Error updating AI insights UI: {exc}")
+
+    def trigger_ai_refresh(self):
+        try:
+            if not hasattr(self, 'integrated_data_manager') or not self.integrated_data_manager:
+                return
+            import asyncio
+
+            coro = self.integrated_data_manager.refresh_ai_snapshot()
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(coro)
+            except RuntimeError:
+                self._run_coroutine_in_thread(coro)
+        except Exception as exc:
+            self.logger.error(f"Error triggering AI refresh: {exc}")
     
     def on_bot_status_update(self, bot_data):
         """Callback dla aktualizacji statusu bota"""

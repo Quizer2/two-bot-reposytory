@@ -9,7 +9,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, is_dataclass
 from enum import Enum
 import json
 
@@ -485,6 +485,39 @@ class StrategyEngine:
     def get_all_strategies(self) -> Dict[str, StrategyState]:
         """Pobiera stany wszystkich strategii"""
         return {sid: strategy.state for sid, strategy in self.strategies.items()}
+
+    def describe_strategies(self) -> List[Dict[str, Any]]:
+        """Zwraca opis wszystkich aktywnych i zarejestrowanych strategii."""
+        catalog: List[Dict[str, Any]] = []
+        for strategy_id, strategy in self.strategies.items():
+            config = getattr(strategy, "config", None)
+            state = getattr(strategy, "state", None)
+            entry: Dict[str, Any] = {
+                "strategy_id": strategy_id,
+                "bot_id": getattr(strategy, "bot_id", getattr(config, "bot_id", None)),
+                "symbol": getattr(config, "symbol", getattr(strategy, "symbol", None)),
+                "name": getattr(config, "name", strategy_id),
+                "active": getattr(state, "active", getattr(strategy, "is_running", False)),
+                "metadata": getattr(state, "metadata", {}),
+            }
+            strategy_type = getattr(config, "strategy_type", None)
+            entry["strategy_type"] = (
+                strategy_type.value if hasattr(strategy_type, "value") else strategy_type
+            )
+            last_update = getattr(state, "last_update", None)
+            if isinstance(last_update, datetime):
+                entry["last_update"] = last_update.isoformat()
+            else:
+                entry["last_update"] = last_update
+            if state is not None:
+                entry["state"] = {
+                    "current_position": getattr(state, "current_position", None),
+                    "total_profit": getattr(state, "total_profit", None),
+                    "total_invested": getattr(state, "total_invested", None),
+                }
+                entry["last_signal"] = self._serialise_signal(getattr(state, "last_signal", None))
+            catalog.append(entry)
+        return catalog
     
     async def shutdown(self):
         """Zamyka silnik strategii"""
@@ -492,11 +525,35 @@ class StrategyEngine:
             # Zatrzymaj wszystkie strategie
             for strategy_id in list(self.strategies.keys()):
                 await self.stop_strategy(strategy_id)
-            
+
             self.strategies.clear()
             self.active = False
-            
+
             self.logger.info("Strategy Engine shutdown completed")
-            
+
         except Exception as e:
             self.logger.error(f"Error during Strategy Engine shutdown: {e}")
+
+    def _serialise_signal(self, signal: Any) -> Optional[Dict[str, Any]]:
+        if signal is None:
+            return None
+        if is_dataclass(signal):
+            data = asdict(signal)
+        elif isinstance(signal, dict):
+            data = dict(signal)
+        elif hasattr(signal, "to_dict"):
+            data = signal.to_dict()
+        else:
+            data = {
+                "symbol": getattr(signal, "symbol", None),
+                "signal_type": getattr(signal, "signal_type", None),
+                "price": getattr(signal, "price", None),
+                "quantity": getattr(signal, "quantity", None),
+                "confidence": getattr(signal, "confidence", None),
+                "reason": getattr(signal, "reason", None),
+                "timestamp": getattr(signal, "timestamp", None),
+            }
+        timestamp = data.get("timestamp")
+        if isinstance(timestamp, datetime):
+            data["timestamp"] = timestamp.isoformat()
+        return data

@@ -1,7 +1,7 @@
-import yaml
 from pathlib import Path
 import os
 from utils.secure_store import get_exchange_credentials
+from utils.yaml_loader import safe_load
 
 REQUIRED_KEYS = [
     ("database", "path"),
@@ -12,7 +12,7 @@ def validate_app_config(config: dict | None = None) -> list[str]:
     cfg_path = Path(__file__).resolve().parents[1] / "config" / "app_config.yaml"
     problems: list[str] = []
     try:
-        data = config if isinstance(config, dict) else (yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {})
+        data = config if isinstance(config, dict) else (safe_load(cfg_path.read_text(encoding="utf-8")) or {})
     except Exception as e:
         return [f"config_read_error: {e}"]
     for keys in REQUIRED_KEYS:
