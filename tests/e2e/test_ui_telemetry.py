@@ -3,9 +3,19 @@ import time
 import threading
 import math
 import pytest
+from pathlib import Path
+import sys
 
 # Ustaw offscreen aby uniknąć problemów z wyświetlaniem w środowisku CI/headless
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from utils.pyqt_stubs import install_pyqt_stubs
+
+install_pyqt_stubs()
 
 from PyQt6.QtWidgets import QApplication
 from ui.metrics_widgets import StatTile, LatencySparkline, get_latency_p95, get_rate_drops, get_bots_list, get_strategies_list, make_bot_equity_getter, make_strategy_equity_getter
@@ -97,4 +107,5 @@ def test_ui_telemetry_stat_tiles_update_offscreen():
     if hasattr(tile_latency, "deleteLater"): tile_latency.deleteLater()
     if hasattr(tile_rate_drops, "deleteLater"): tile_rate_drops.deleteLater()
     if hasattr(sparkline, "deleteLater"): sparkline.deleteLater()
-    if hasattr(app, "quit"): app.quit()
+    if hasattr(app, "quit"):
+        app.quit()

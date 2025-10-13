@@ -5,6 +5,10 @@ numpy
 pandas
 matplotlib
 cryptography
+PyYAML
+requests
+websockets
+aiosqlite
 pytest
 pytest-asyncio
 prometheus-client

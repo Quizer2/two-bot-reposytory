@@ -33,6 +33,14 @@ python test_api_interface.py
 
 Upewnij się, że wszystkie testy przechodzą pomyślnie.
 
+### 3. Kontrola zależności runtime
+```bash
+python tools/check_runtime_dependencies.py
+```
+
+Skrypt zapisze raport `runtime_dependency_report.json` oraz wypisze brakujące moduły Python i biblioteki systemowe (np. `libGL`).
+Zainstaluj brakujące elementy **przed** wdrożeniem release candidate.
+
 ## 🔑 Konfiguracja kluczy API {#konfiguracja-api}
 
 ### Binance
@@ -125,6 +133,11 @@ Upewnij się, że wszystkie testy przechodzą pomyślnie.
 - 🟡 **Testowanie**: Sprawdzanie połączenia
 - ⚫ **Wyłączona**: Giełda nieaktywna
 - ❌ **Błąd**: Problem z konfiguracją
+
+### Limity zapytań API
+- TradingEngine publikuje zdarzenia `rate.limit.warning` i `rate.limit.blocked` w EventBusie.
+- Konfigurację limitów (globalnych i per-symbol) można zmieniać w sekcji `trading.rate_limiting` pliku `config/app_config.json`.
+- Widgety lub integracje mogą odpytywać metodę `TradingEngine.get_rate_limit_snapshot()` w celu wizualizacji wykorzystania limitów.
 
 ### Automatyczne sprawdzanie
 Aplikacja automatycznie:

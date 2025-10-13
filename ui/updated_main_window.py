@@ -1,12 +1,49 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QTabWidget, QVBoxLayout,
-                             QHBoxLayout, QLabel, QDockWidget, QPushButton,
-                             QScrollArea, QFrame, QGridLayout, QSizePolicy,
-                             QTableWidget, QTableWidgetItem, QHeaderView)
-from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
-from PyQt6.QtGui import QFont, QBrush, QColor
+try:
+    from PyQt6.QtWidgets import (
+        QMainWindow,
+        QWidget,
+        QTabWidget,
+        QVBoxLayout,
+        QHBoxLayout,
+        QLabel,
+        QDockWidget,
+        QPushButton,
+        QScrollArea,
+        QFrame,
+        QGridLayout,
+        QSizePolicy,
+        QTableWidget,
+        QTableWidgetItem,
+        QHeaderView,
+    )
+    from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
+    from PyQt6.QtGui import QFont, QBrush, QColor
+except Exception as exc:  # pragma: no cover - zależne od środowiska (np. brak libGL)
+    from utils.pyqt_stubs import install_pyqt_stubs
+
+    install_pyqt_stubs(force=True)
+    from PyQt6.QtWidgets import (
+        QMainWindow,
+        QWidget,
+        QTabWidget,
+        QVBoxLayout,
+        QHBoxLayout,
+        QLabel,
+        QDockWidget,
+        QPushButton,
+        QScrollArea,
+        QFrame,
+        QGridLayout,
+        QSizePolicy,
+        QTableWidget,
+        QTableWidgetItem,
+        QHeaderView,
+    )
+    from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QRect
+    from PyQt6.QtGui import QFont, QBrush, QColor
 
 from utils.logger import get_logger
 from utils.config_manager import get_config_manager
