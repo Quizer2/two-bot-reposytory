@@ -54,7 +54,7 @@ Raport JSON zawiera wynik testów, smoke testy oraz kontrolę zależności – d
 python tools/check_distribution_readiness.py
 ```
 
-Skrypt zwraca status trybu handlu (paper/live), kompletność kluczy API, poprawność limitów ryzyka **oraz** automatycznie wykrywa znaczniki konfliktów Gita (`<<<<<<<`, `=======`, `>>>>>>>`). Wykonaj go przed publikacją release candidate, aby potwierdzić, że panel ustawień i RiskManager są zsynchronizowane oraz że w repozytorium nie pozostały nierozwiązane konflikty.
+Skrypt zwraca status trybu handlu (paper/live), kompletność kluczy API, poprawność limitów ryzyka **oraz** automatycznie wykrywa znaczniki konfliktów Gita (siedem znaków `<`, separator z `=`, siedem znaków `>`). Wykonaj go przed publikacją release candidate, aby potwierdzić, że panel ustawień i RiskManager są zsynchronizowane oraz że w repozytorium nie pozostały nierozwiązane konflikty.
 
 ## 🔑 Konfiguracja kluczy API {#konfiguracja-api}
 

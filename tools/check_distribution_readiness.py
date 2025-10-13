@@ -223,7 +223,14 @@ def _list_tracked_files() -> List[Path]:
     return [Path(line) for line in completed.stdout.splitlines() if line.strip()]
 
 
-CONFLICT_REGEX = re.compile(r"^(<<<<<<<(?: .+)?|=======|>>>>>>>(?: .+)?)$", re.MULTILINE)
+_CONFLICT_PREFIX = "<" * 7
+_CONFLICT_SEPARATOR = "=" * 7
+_CONFLICT_SUFFIX = ">" * 7
+
+CONFLICT_REGEX = re.compile(
+    rf"^({re.escape(_CONFLICT_PREFIX)}(?: .+)?|{re.escape(_CONFLICT_SEPARATOR)}|{re.escape(_CONFLICT_SUFFIX)}(?: .+)?)$",
+    re.MULTILINE,
+)
 
 
 def _check_conflict_markers(tracked_files: List[Path] | None = None) -> CheckResult:
