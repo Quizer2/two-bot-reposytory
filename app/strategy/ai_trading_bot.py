@@ -4,14 +4,17 @@ do automatycznego doboru strategii i maksymalizacji zysków
 """
 
 import asyncio
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Any
 import json
+import logging
+import os
 import pickle
 from dataclasses import dataclass, field
-import logging
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
 
 # Machine Learning imports
 try:
@@ -22,6 +25,7 @@ try:
     import joblib
     ML_AVAILABLE = True
 except ImportError:
+    joblib = None  # type: ignore
     ML_AVAILABLE = False
 
 from .base_bot import BaseBot
@@ -30,6 +34,7 @@ from .grid import GridStrategy
 from .scalping import ScalpingStrategy
 from ..risk_management import RiskManager
 from ..notifications import NotificationManager
+from utils.config_manager import get_config_manager
 from utils.logger import get_logger
 
 
@@ -173,6 +178,7 @@ class AITradingBot(BaseBot):
         # Provider danych AI dla bogatszego kontekstu rynkowego
         self.ai_data_provider = None
         self.latest_ai_snapshot: Optional[Dict[str, Any]] = None
+        self.training_profile: str = "paper"
 
         self.logger.info(f"AI Trading Bot zainicjalizowany - cel: ${self.target_hourly_profit}/h")
     
@@ -195,9 +201,11 @@ class AITradingBot(BaseBot):
             
             # Aktualizuj atrybuty BaseBot bez wywoływania konstruktora ponownie
             self.notification_manager = self.notification_manager or None
-            
+
             self.logger.info("Inicjalizacja AI Trading Bot...")
-            
+
+            self._sync_training_profile(initial=True)
+
             # Załaduj historyczne dane
             await self._load_historical_data()
             
@@ -232,6 +240,9 @@ class AITradingBot(BaseBot):
             # Główna pętla AI bota
             while self.is_running:
                 try:
+                    if self._sync_training_profile():
+                        await self._load_historical_data()
+
                     # Analiza warunków rynkowych
                     await self._analyze_market_conditions()
                     
@@ -903,7 +914,10 @@ class AITradingBot(BaseBot):
         try:
             if not ML_AVAILABLE:
                 return
-            
+
+            if self._sync_training_profile():
+                await self._load_historical_data()
+
             self.logger.info("Rozpoczynam ponowne trenowanie modelu ML...")
             
             # Przygotuj dane treningowe
@@ -977,30 +991,126 @@ class AITradingBot(BaseBot):
         except Exception as e:
             self.logger.error(f"Błąd przygotowania danych treningowych: {e}")
             return np.array([]), np.array([])
+
+    def _resolve_trading_mode(self) -> str:
+        """Określa aktualny tryb handlu na potrzeby profilu uczenia."""
+        try:
+            param_mode = str(self.parameters.get('trading_mode', '')).strip().lower()
+            if param_mode in {"paper", "live"}:
+                return param_mode
+        except Exception:
+            pass
+
+        env_mode = os.environ.get("TRADING_MODE")
+        if env_mode:
+            env_mode = env_mode.strip().lower()
+            if env_mode in {"paper", "live"}:
+                return env_mode
+
+        try:
+            from app.trading_mode_manager import get_trading_mode_manager, TradingMode  # type: ignore
+
+            manager = get_trading_mode_manager()  # type: ignore
+            if manager is not None and hasattr(manager, "get_current_mode"):
+                mode_obj = manager.get_current_mode()
+                if isinstance(mode_obj, str):
+                    candidate = mode_obj.lower()
+                    if candidate in {"paper", "live"}:
+                        return candidate
+                if 'TradingMode' in locals() and isinstance(mode_obj, TradingMode):
+                    candidate = mode_obj.value.lower()
+                    if candidate in {"paper", "live"}:
+                        return candidate
+                if hasattr(mode_obj, "value"):
+                    candidate = str(getattr(mode_obj, "value", "")).lower()
+                    if candidate in {"paper", "live"}:
+                        return candidate
+        except Exception as exc:
+            self.logger.debug("Nie udało się pobrać trybu z TradingModeManager: %s", exc)
+
+        try:
+            config_manager = get_config_manager()
+            config_mode = str(config_manager.get_setting('app', 'trading.mode', 'auto')).lower()
+            if config_mode in {"paper", "live"}:
+                if config_mode == "live" and bool(config_manager.get_setting('trading', 'paper_trading', False)):
+                    return "paper"
+                return config_mode
+            if bool(config_manager.get_setting('trading', 'paper_trading', False)):
+                return "paper"
+        except Exception:
+            pass
+
+        return "paper"
+
+    def _resolve_training_profile(self) -> str:
+        mode = self._resolve_trading_mode()
+        return "live" if mode == "live" else "paper"
+
+    def _sync_training_profile(self, *, initial: bool = False) -> bool:
+        """Aktualizuje profil uczenia w zależności od trybu tradingowego."""
+        profile = self._resolve_training_profile()
+        if profile != self.training_profile:
+            if not initial:
+                self.logger.info(
+                    "Przełączanie profilu uczenia AI z %s na %s", self.training_profile, profile
+                )
+            self.training_profile = profile
+            return True
+        return False
+
+    def _get_training_storage_root(self) -> Path:
+        base_dir = os.environ.get("AI_BOT_STORAGE_DIR", "data/ai_models")
+        path = Path(base_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _get_model_path(self) -> Path:
+        storage = self._get_training_storage_root() / self.training_profile
+        storage.mkdir(parents=True, exist_ok=True)
+        return storage / f"ai_model_{self.bot_id}.pkl"
+
+    def _write_profile_metadata(self, model_path: Path) -> None:
+        metadata = {
+            "bot_id": self.bot_id,
+            "profile": self.training_profile,
+            "trading_mode": self._resolve_trading_mode(),
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        try:
+            meta_path = model_path.with_suffix(".json")
+            meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            self.logger.debug("Nie udało się zapisać metadanych profilu AI: %s", exc)
     
     async def _save_model(self):
         """Zapisz model ML do pliku"""
         try:
+            if not ML_AVAILABLE or self.ml_model is None:
+                return
+
+            self._sync_training_profile()
+
             model_data = {
                 'model': self.ml_model,
                 'scaler': self.scaler,
                 'feature_columns': self.feature_columns,
                 'last_updated': datetime.now()
             }
-            
-            model_path = f"data/ai_model_{self.bot_id}.pkl"
+
+            model_path = self._get_model_path()
             joblib.dump(model_data, model_path)
-            
+            self._write_profile_metadata(model_path)
+
             self.logger.info(f"Model zapisany: {model_path}")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd zapisywania modelu: {e}")
-    
+
     async def _load_historical_data(self):
         """Załaduj historyczne dane"""
         try:
             # Załaduj model jeśli istnieje
-            model_path = f"data/ai_model_{self.bot_id}.pkl"
+            model_path = self._get_model_path()
             try:
                 model_data = joblib.load(model_path)
                 self.ml_model = model_data['model']

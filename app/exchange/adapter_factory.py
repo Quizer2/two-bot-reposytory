@@ -126,13 +126,12 @@ def create_exchange_adapter(
         return SimulatedExchangeAdapter(exchange, base_price=_BASE_PRICE_MAP.get(exchange, 100.0))
 
     if resolved_mode in {"simulated", "paper"}:
-        if intent == "market_data" and LiveCCXTAdapter.is_supported():
-            logger.info(
-                "Using live market-data adapter for %s in %s mode (public endpoints)",
-                exchange,
-                resolved_mode,
-            )
-            return LiveCCXTAdapter(exchange, loop=event_loop, **{k: v for k, v in credentials.items() if v})
+        logger.info(
+            "Initialising simulated adapter for %s in %s mode (intent=%s)",
+            exchange,
+            resolved_mode,
+            intent,
+        )
         return SimulatedExchangeAdapter(exchange, base_price=_BASE_PRICE_MAP.get(exchange, 100.0))
 
     if resolved_mode in {"live", "auto"}:

@@ -145,6 +145,10 @@ class MarketDataManager:
             if offline_mode:
                 return False
             trading_mode = str(config_manager.get_setting('app', 'trading.mode', 'auto')).lower()
+            if trading_mode == 'paper':
+                return False
+            if bool(config_manager.get_setting('trading', 'paper_trading', False)):
+                return False
         except Exception:
             trading_mode = 'auto'
 
