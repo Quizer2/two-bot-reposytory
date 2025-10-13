@@ -1,0 +1,16 @@
+exchanges:
+  binance:
+    place_order: { method: POST, path: "/api/v3/order" }
+    cancel_order: { method: DELETE, path: "/api/v3/order" }
+    get_ticker:   { method: GET,  path: "/api/v3/ticker/price" }
+    get_book:     { method: GET,  path: "/api/v3/depth" }
+  okx:
+    place_order: { method: POST, path: "/api/v5/trade/order" }
+    cancel_order: { method: POST, path: "/api/v5/trade/cancel-order" }
+    get_ticker: { method: GET, path: "/api/v5/market/ticker" }
+    get_book: { method: GET, path: "/api/v5/market/books" }
+  bybit:
+    place_order: { method: POST, path: "/v5/order/create" }
+    cancel_order: { method: POST, path: "/v5/order/cancel" }
+    get_ticker: { method: GET, path: "/v5/market/tickers" }
+    get_book: { method: GET, path: "/v5/market/orderbook" }

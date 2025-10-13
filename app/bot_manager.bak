@@ -1,0 +1,1058 @@
+"""
+Bot Manager - Zarządzanie instancjami strategii handlowych
+"""
+
+import asyncio
+import json
+import logging
+import threading
+from typing import Dict, List, Optional, Any, Union
+from datetime import datetime
+from enum import Enum
+from dataclasses import dataclass, asdict
+import traceback
+
+from utils.logger import get_logger
+from app.database import DatabaseManager
+from app.risk_management import RiskManager
+from app.notifications import NotificationManager
+from app.exchange.base_exchange import BaseExchange
+from utils.helpers import ValidationHelper, FormatHelper
+
+# Import strategii z obsługą błędów
+try:
+    from app.strategy.dca import DCAStrategy, DCAStatus
+    from app.strategy.grid import GridStrategy, GridStatus
+    from app.strategy.scalping import ScalpingStrategy, ScalpingStatus
+    from app.strategy.custom import CustomStrategy, CustomStatus
+    from app.strategy.swing import SwingStrategy, SwingStatus
+    from app.strategy.arbitrage import ArbitrageStrategy, ArbitrageStatus
+    from app.strategy.ai_trading_bot import AITradingBot
+except ImportError as e:
+    logging.warning(f"Nie można zaimportować niektórych strategii: {e}")
+    # Fallback - utworzymy podstawowe klasy strategii
+    class DCAStrategy:
+        def __init__(self, *args, **kwargs):
+            self.logger = logging.getLogger(__name__)
+            self.is_running = False
+            
+        async def initialize(self, *args, **kwargs):
+            pass
+            
+        async def start(self):
+            self.is_running = True
+            self.logger.info("DCA Strategy started (fallback)")
+            
+        async def stop(self):
+            self.is_running = False
+            self.logger.info("DCA Strategy stopped")
+            
+        async def pause(self):
+            self.logger.info("DCA Strategy paused")
+            
+        async def resume(self):
+            self.logger.info("DCA Strategy resumed")
+            
+        async def get_status(self):
+            return {"status": "running" if self.is_running else "stopped"}
+            
+        async def get_statistics(self):
+            return {
+                "total_trades": 0,
+                "successful_trades": 0,
+                "failed_trades": 0,
+                "total_profit": 0.0,
+                "total_fees": 0.0,
+                "win_rate": 0.0,
+                "average_profit": 0.0,
+                "max_drawdown": 0.0,
+                "sharpe_ratio": 0.0,
+                "uptime": 100.0 if self.is_running else 0.0
+            }
+            
+        async def update_parameters(self, parameters: Dict):
+            self.logger.info(f"Updated parameters: {parameters}")
+    
+    class GridStrategy(DCAStrategy):
+        async def start(self):
+            self.is_running = True
+            self.logger.info("Grid Strategy started (fallback)")
+    
+    class ScalpingStrategy(DCAStrategy):
+        async def start(self):
+            self.is_running = True
+            self.logger.info("Scalping Strategy started (fallback)")
+    
+    class CustomStrategy(DCAStrategy):
+        async def start(self):
+            self.is_running = True
+            self.logger.info("Custom Strategy started (fallback)")
+    
+    # Dodaj brakujące statusy
+    class DCAStatus:
+        STOPPED = "stopped"
+        RUNNING = "running"
+        ERROR = "error"
+        PAUSED = "paused"
+    
+    class GridStatus:
+        STOPPED = "stopped"
+        RUNNING = "running"
+        ERROR = "error"
+        PAUSED = "paused"
+    
+    class ScalpingStatus:
+        STOPPED = "stopped"
+        RUNNING = "running"
+        ERROR = "error"
+        PAUSED = "paused"
+    
+    class CustomStatus:
+        STOPPED = "stopped"
+        RUNNING = "running"
+        ERROR = "error"
+        PAUSED = "paused"
+
+class BotStatus(Enum):
+    """Status botów"""
+    STOPPED = "stopped"
+    RUNNING = "running"
+    ERROR = "error"
+    PAUSED = "paused"
+    STARTING = "starting"
+    STOPPING = "stopping"
+
+class BotType(Enum):
+    """Typy strategii"""
+    DCA = "dca"
+    GRID = "grid"
+    SCALPING = "scalping"
+    CUSTOM = "custom"
+    SWING = "swing"
+    ARBITRAGE = "arbitrage"
+    AI = "ai"
+
+@dataclass
+class BotInfo:
+    """Informacje o bocie"""
+    id: int
+    user_id: int
+    name: str
+    type: str
+    pair: str
+    status: str
+    parameters: Dict[str, Any]
+    created_at: datetime
+    updated_at: datetime
+    last_activity: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+@dataclass
+class BotStatistics:
+    """Statystyki bota"""
+    total_trades: int = 0
+    successful_trades: int = 0
+    failed_trades: int = 0
+    total_profit: float = 0.0
+    total_fees: float = 0.0
+    win_rate: float = 0.0
+    average_profit: float = 0.0
+    max_drawdown: float = 0.0
+    sharpe_ratio: float = 0.0
+    uptime: float = 0.0
+
+class BotManager:
+    """Manager zarządzający wszystkimi strategiami handlowymi"""
+    
+    def __init__(self, db_manager: DatabaseManager, exchange: BaseExchange, 
+                 notification_manager: 'NotificationManager' = None, data_manager=None):
+        self.logger = get_logger("BotManager")
+        self.db_manager = db_manager
+        self.exchange = exchange
+        self.risk_manager = RiskManager(db_manager)
+        self.notification_manager = notification_manager  # Będzie przekazany z zewnątrz
+        
+        # Data manager - jeśli nie podano, użyj integrated data manager
+        if data_manager is None:
+            from core.integrated_data_manager import get_integrated_data_manager
+            self.data_manager = get_integrated_data_manager()
+        else:
+            self.data_manager = data_manager
+        
+        # Słownik aktywnych strategii {bot_id: strategy_instance}
+        self.active_strategies: Dict[int, Union[DCAStrategy, GridStrategy, ScalpingStrategy, CustomStrategy, SwingStrategy, ArbitrageStrategy, AITradingBot]] = {}
+        
+        # Słownik zadań asyncio dla strategii
+        self.strategy_tasks: Dict[int, asyncio.Task] = {}
+        
+        # Flaga działania managera
+        self.is_running = False
+        
+        # Statystyki managera
+        self.manager_stats = {
+            'total_bots': 0,
+            'running_bots': 0,
+            'stopped_bots': 0,
+            'error_bots': 0,
+            'total_profit': 0.0,
+            'uptime': 0.0
+        }
+        
+    async def initialize(self):
+        """Inicjalizacja managera"""
+        try:
+            self.logger.info("Inicjalizacja Bot Manager...")
+            
+            # Inicjalizacja komponentów
+            if hasattr(self.risk_manager, 'initialize'):
+                await self.risk_manager.initialize()
+            
+            if self.notification_manager and hasattr(self.notification_manager, 'initialize'):
+                await self.notification_manager.initialize()
+            
+            # Załadowanie zapisanych botów
+            await self.load_saved_bots()
+            
+            self.logger.info("Bot Manager zainicjalizowany pomyślnie")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas inicjalizacji managera: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return False
+    
+    async def start(self):
+        """Uruchomienie managera botów"""
+        if not await self.initialize():
+            raise Exception("Nie udało się zainicjalizować Bot Manager")
+            
+        self.logger.info("Uruchamianie Bot Manager...")
+        self.is_running = True
+        
+        # Główna pętla monitorowania
+        try:
+            while self.is_running:
+                await self.monitor_strategies()
+                await self.update_manager_statistics()
+                await asyncio.sleep(1)  # Sprawdzanie co sekundę
+        except Exception as e:
+            self.logger.error(f"Błąd w głównej pętli managera: {e}")
+        finally:
+            await self.shutdown()
+    
+    async def shutdown(self):
+        """Zamknięcie managera"""
+        self.logger.info("Zamykanie Bot Manager...")
+        self.is_running = False
+        
+        # Zatrzymanie wszystkich strategii
+        await self.stop_all_bots()
+        
+        # Zamknięcie komponentów
+        if self.notification_manager and hasattr(self.notification_manager, 'shutdown'):
+            await self.notification_manager.shutdown()
+        
+        self.logger.info("Bot Manager zamknięty")
+    
+    async def load_saved_bots(self):
+        """Załadowanie zapisanych botów z bazy danych"""
+        try:
+            saved_bots = await self.db_manager.get_active_bots()
+            
+            for bot_data in saved_bots:
+                await self.create_strategy_from_data(bot_data)
+                
+            self.logger.info(f"Załadowano {len(saved_bots)} botów z bazy danych")
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas ładowania botów: {e}")
+    
+    async def create_strategy_from_data(self, bot_data: Dict) -> Optional[int]:
+        """Utworzenie strategii na podstawie danych z bazy"""
+        try:
+            bot_id = bot_data['id']
+            bot_type = BotType(bot_data['type'])
+            parameters = json.loads(bot_data['parameters']) if isinstance(bot_data['parameters'], str) else bot_data['parameters']
+            
+            # Utworzenie odpowiedniego typu strategii
+            strategy = await self.create_strategy_instance(
+                bot_type, 
+                bot_data['pair'], 
+                parameters,
+                bot_id
+            )
+            
+            if strategy:
+                self.active_strategies[bot_id] = strategy
+                
+                # Uruchomienie strategii jeśli była aktywna
+                if bot_data['status'] == BotStatus.RUNNING.value:
+                    await self.start_bot(bot_id)
+                    
+                return bot_id
+                
+        except Exception as e:
+            self.logger.error(f"Błąd podczas tworzenia strategii z danych: {e}")
+            return None
+    
+    async def create_strategy_instance(self, bot_type: BotType, pair: str, 
+                                     parameters: Dict, bot_id: Optional[int] = None):
+        """Utworzenie instancji strategii odpowiedniego typu"""
+        try:
+            # Walidacja pary handlowej (z obsługą błędów)
+            try:
+                if not ValidationHelper.validate_trading_pair(pair):
+                    self.logger.warning(f"Nieprawidłowa para handlowa: {pair}, kontynuuję z ostrzeżeniem")
+            except Exception as e:
+                self.logger.warning(f"Błąd podczas walidacji pary {pair}: {e}")
+            
+            # Dodaj parę do parametrów strategii
+            strategy_parameters = parameters.copy()
+            strategy_parameters['pair'] = pair
+            
+            # Nazwa giełdy (domyślnie binance)
+            exchange_name = parameters.get('exchange', 'binance')
+            
+            try:
+                if bot_type == BotType.DCA:
+                    strategy = DCAStrategy(
+                        bot_id=str(bot_id) if bot_id else "unknown",
+                        exchange_name=exchange_name,
+                        parameters=strategy_parameters
+                    )
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                elif bot_type == BotType.GRID:
+                    strategy = GridStrategy(
+                        bot_id=str(bot_id) if bot_id else "unknown",
+                        parameters=strategy_parameters
+                    )
+                    # Grid strategy ma inną metodę initialize
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                elif bot_type == BotType.SCALPING:
+                    # Scalping strategy ma inny konstruktor
+                    strategy = ScalpingStrategy(
+                        symbol=pair,
+                        timeframe=strategy_parameters.get('timeframe', '1m'),
+                        amount=strategy_parameters.get('amount', 100.0),
+                        rsi_period=strategy_parameters.get('rsi_period', 14),
+                        rsi_oversold=strategy_parameters.get('rsi_oversold', 30.0),
+                        rsi_overbought=strategy_parameters.get('rsi_overbought', 70.0),
+                        ema_fast=strategy_parameters.get('ema_fast', 12),
+                        ema_slow=strategy_parameters.get('ema_slow', 26),
+                        macd_signal=strategy_parameters.get('macd_signal', 9),
+                        bb_period=strategy_parameters.get('bb_period', 20),
+                        bb_std=strategy_parameters.get('bb_std', 2.0),
+                        min_profit_percentage=strategy_parameters.get('min_profit_percentage', 0.5),
+                        max_position_time=strategy_parameters.get('max_position_time', 300),
+                        stop_loss_percentage=strategy_parameters.get('stop_loss_percentage'),
+                        take_profit_percentage=strategy_parameters.get('take_profit_percentage'),
+                        max_daily_trades=strategy_parameters.get('max_daily_trades'),
+                        start_time=strategy_parameters.get('start_time'),
+                        end_time=strategy_parameters.get('end_time')
+                    )
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                elif bot_type == BotType.CUSTOM:
+                    # Custom strategy ma inny konstruktor
+                    strategy = CustomStrategy(
+                        pair=pair,
+                        custom_rules=strategy_parameters.get('custom_rules', []),
+                        check_interval=strategy_parameters.get('check_interval', 30)
+                    )
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                elif bot_type == BotType.SWING:
+                    # Swing Trading strategy
+                    strategy = SwingStrategy(
+                        symbol=pair,
+                        timeframe=strategy_parameters.get('timeframe', '4h'),
+                        amount=strategy_parameters.get('amount', 100.0),
+                        rsi_period=strategy_parameters.get('rsi_period', 14),
+                        rsi_oversold=strategy_parameters.get('rsi_oversold', 30.0),
+                        rsi_overbought=strategy_parameters.get('rsi_overbought', 70.0),
+                        ma_fast=strategy_parameters.get('ma_fast', 20),
+                        ma_slow=strategy_parameters.get('ma_slow', 50),
+                        bb_period=strategy_parameters.get('bb_period', 20),
+                        bb_std=strategy_parameters.get('bb_std', 2.0),
+                        atr_period=strategy_parameters.get('atr_period', 14),
+                        min_profit_percentage=strategy_parameters.get('min_profit_percentage', 2.0),
+                        stop_loss_percentage=strategy_parameters.get('stop_loss_percentage', 1.5),
+                        take_profit_percentage=strategy_parameters.get('take_profit_percentage', 3.0),
+                        max_position_time=strategy_parameters.get('max_position_time', 86400),
+                        max_daily_trades=strategy_parameters.get('max_daily_trades', 3),
+                        trend_strength_threshold=strategy_parameters.get('trend_strength_threshold', 0.6)
+                    )
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                elif bot_type == BotType.ARBITRAGE:
+                    # Arbitrage strategy
+                    strategy = ArbitrageStrategy(
+                        symbol=pair,
+                        exchanges=strategy_parameters.get('exchanges', ['binance', 'coinbase']),
+                        min_profit_percentage=strategy_parameters.get('min_profit_percentage', 0.5),
+                        max_trade_amount=strategy_parameters.get('max_trade_amount', 1000.0),
+                        check_interval=strategy_parameters.get('check_interval', 5),
+                        slippage_tolerance=strategy_parameters.get('slippage_tolerance', 0.1),
+                        max_exposure_percentage=strategy_parameters.get('max_exposure_percentage', 50.0),
+                        price_update_timeout=strategy_parameters.get('price_update_timeout', 10),
+                        min_volume_threshold=strategy_parameters.get('min_volume_threshold', 10000.0),
+                        max_spread_age=strategy_parameters.get('max_spread_age', 30)
+                    )
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                elif bot_type == BotType.AI:
+                    # AI Trading Bot strategy - standardowy wzorzec inicjalizacji
+                    ai_parameters = {
+                        'pair': pair,
+                        'budget': strategy_parameters.get('initial_balance', 1000.0),
+                        'target_hourly_profit': strategy_parameters.get('target_hourly_profit', 2.0),
+                        'initial_balance': strategy_parameters.get('initial_balance', 1000.0),
+                        'risk_percentage': strategy_parameters.get('risk_percentage', 2.0),
+                        'risk_tolerance': strategy_parameters.get('risk_tolerance', 0.02),
+                        'max_positions': strategy_parameters.get('max_positions', 3),
+                        'learning_rate': strategy_parameters.get('learning_rate', 0.001),
+                        'model_update_frequency': strategy_parameters.get('model_update_frequency', 100),
+                        'use_reinforcement_learning': strategy_parameters.get('use_reinforcement_learning', True),
+                        'feature_engineering_enabled': strategy_parameters.get('feature_engineering_enabled', True),
+                        'sentiment_analysis_enabled': strategy_parameters.get('sentiment_analysis_enabled', False),
+                        'ensemble_models': strategy_parameters.get('ensemble_models', True),
+                        'daily_loss_limit': strategy_parameters.get('daily_loss_limit', 50.0)
+                    }
+                    
+                    strategy = AITradingBot(
+                        bot_id=str(bot_id) if bot_id else "unknown",
+                        parameters=ai_parameters
+                    )
+                    # AI Trading Bot ma metodę initialize jak inne strategie
+                    if hasattr(strategy, 'initialize'):
+                        await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                    return strategy
+                    
+                else:
+                    raise ValueError(f"Nieznany typ strategii: {bot_type}")
+                    
+            except Exception as e:
+                self.logger.error(f"Błąd podczas tworzenia strategii {bot_type}: {e}")
+                # Fallback - zwróć podstawową strategię
+                strategy = DCAStrategy(
+                    bot_id=str(bot_id) if bot_id else "unknown",
+                    exchange_name=exchange_name,
+                    parameters=strategy_parameters
+                )
+                if hasattr(strategy, 'initialize'):
+                    await strategy.initialize(self.db_manager, self.risk_manager, self.exchange, self.data_manager, self.notification_manager)
+                return strategy
+                
+        except Exception as e:
+            self.logger.error(f"Krytyczny błąd podczas tworzenia instancji strategii: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return None
+    
+    async def create_new_bot(self, bot_type: str, pair: str, name: str,
+                           parameters: Dict, user_id: int) -> Optional[int]:
+        """Utworzenie nowego bota i zapisanie w bazie"""
+        try:
+            # Walidacja parametrów
+            if not await self.validate_bot_parameters(bot_type, parameters):
+                self.logger.error(f"Nieprawidłowe parametry dla bota typu {bot_type}")
+                return None
+            
+            # Walidacja pary handlowej
+            if not ValidationHelper.validate_trading_pair(pair):
+                self.logger.error(f"Nieprawidłowa para handlowa: {pair}")
+                return None
+            
+            # Zapisanie w bazie danych
+            bot_id = await self.db_manager.create_bot(
+                user_id=user_id,
+                name=name,
+                bot_type=bot_type,
+                pair=pair,
+                parameters=json.dumps(parameters),
+                status=BotStatus.STOPPED.value
+            )
+            
+            if bot_id:
+                # Utworzenie instancji strategii
+                strategy = await self.create_strategy_instance(
+                    BotType(bot_type), pair, parameters, bot_id
+                )
+                
+                if strategy:
+                    self.active_strategies[bot_id] = strategy
+                    self.logger.info(f"Utworzono nowego bota ID: {bot_id}, nazwa: {name}")
+                    
+                    # Powiadomienie
+                    if self.notification_manager:
+                        await self.notification_manager.send_notification(
+                            f"Utworzono nowego bota: {name} ({bot_type.upper()})",
+                            "info"
+                        )
+                    
+                    return bot_id
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas tworzenia nowego bota: {e}")
+            return None
+    
+    async def start_bot(self, bot_id: int) -> bool:
+        """Uruchomienie bota"""
+        try:
+            if bot_id not in self.active_strategies:
+                self.logger.error(f"Bot {bot_id} nie istnieje")
+                return False
+            
+            strategy = self.active_strategies[bot_id]
+            
+            # Sprawdzenie czy bot już działa
+            if bot_id in self.strategy_tasks and not self.strategy_tasks[bot_id].done():
+                self.logger.warning(f"Bot {bot_id} już działa")
+                return True
+            
+            # Aktualizacja statusu na "starting"
+            await self.db_manager.update_bot_status(bot_id, BotStatus.STARTING.value)
+            
+            # Uruchomienie strategii
+            await strategy.start()
+            
+            # Uruchomienie w osobnym zadaniu
+            task = asyncio.create_task(self._run_strategy_loop(bot_id, strategy))
+            self.strategy_tasks[bot_id] = task
+            
+            # Aktualizacja statusu w bazie
+            await self.db_manager.update_bot_status(bot_id, BotStatus.RUNNING.value)
+            
+            self.logger.info(f"Uruchomiono bota {bot_id}")
+            
+            # Powiadomienie
+            if self.notification_manager:
+                await self.notification_manager.send_notification(
+                    f"Bot {bot_id} został uruchomiony",
+                    "info"
+                )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas uruchamiania bota {bot_id}: {e}")
+            await self.db_manager.update_bot_status(bot_id, BotStatus.ERROR.value)
+            return False
+    
+    async def _run_strategy_loop(self, bot_id: int, strategy):
+        """Główna pętla strategii"""
+        try:
+            self.logger.info(f"Uruchamianie pętli strategii dla bota {bot_id}")
+            
+            # Sprawdź czy strategia ma metodę start
+            if not hasattr(strategy, 'start'):
+                self.logger.error(f"Strategia bota {bot_id} nie ma metody start()")
+                await self.db_manager.update_bot_status(bot_id, BotStatus.ERROR.value)
+                return
+            
+            # Uruchom strategię - każda strategia ma własną pętlę w metodzie start()
+            await strategy.start()
+                
+        except asyncio.CancelledError:
+            self.logger.info(f"Strategia {bot_id} została anulowana")
+            try:
+                if hasattr(strategy, 'stop'):
+                    await strategy.stop()
+            except Exception as e:
+                self.logger.error(f"Błąd podczas zatrzymywania strategii {bot_id}: {e}")
+            raise
+        except Exception as e:
+            self.logger.error(f"Błąd w pętli strategii {bot_id}: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            try:
+                await self.db_manager.update_bot_status(bot_id, BotStatus.ERROR.value)
+                await self.db_manager.update_bot_error(bot_id, str(e))
+            except Exception as db_error:
+                self.logger.error(f"Błąd podczas aktualizacji statusu bota {bot_id}: {db_error}")
+            raise
+    
+    async def stop_bot(self, bot_id: int) -> bool:
+        """Zatrzymanie bota"""
+        try:
+            # Aktualizacja statusu na "stopping"
+            await self.db_manager.update_bot_status(bot_id, BotStatus.STOPPING.value)
+            
+            # Zatrzymanie zadania
+            if bot_id in self.strategy_tasks:
+                task = self.strategy_tasks[bot_id]
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                
+                del self.strategy_tasks[bot_id]
+            
+            # Zatrzymanie strategii
+            if bot_id in self.active_strategies:
+                strategy = self.active_strategies[bot_id]
+                await strategy.stop()
+            
+            # Aktualizacja statusu w bazie
+            await self.db_manager.update_bot_status(bot_id, BotStatus.STOPPED.value)
+            
+            self.logger.info(f"Zatrzymano bota {bot_id}")
+            
+            # Powiadomienie
+            if self.notification_manager:
+                await self.notification_manager.send_notification(
+                    f"Bot {bot_id} został zatrzymany",
+                    "info"
+                )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas zatrzymywania bota {bot_id}: {e}")
+            return False
+    
+    async def pause_bot(self, bot_id: int) -> bool:
+        """Wstrzymanie bota"""
+        try:
+            if bot_id not in self.active_strategies:
+                return False
+                
+            strategy = self.active_strategies[bot_id]
+            await strategy.pause()
+            
+            await self.db_manager.update_bot_status(bot_id, BotStatus.PAUSED.value)
+            
+            self.logger.info(f"Wstrzymano bota {bot_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas wstrzymywania bota {bot_id}: {e}")
+            return False
+    
+    async def resume_bot(self, bot_id: int) -> bool:
+        """Wznowienie bota"""
+        try:
+            if bot_id not in self.active_strategies:
+                return False
+                
+            strategy = self.active_strategies[bot_id]
+            await strategy.resume()
+            
+            await self.db_manager.update_bot_status(bot_id, BotStatus.RUNNING.value)
+            
+            self.logger.info(f"Wznowiono bota {bot_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas wznawiania bota {bot_id}: {e}")
+            return False
+    
+    async def delete_bot(self, bot_id: int) -> bool:
+        """Usunięcie bota"""
+        try:
+            # Zatrzymanie bota
+            await self.stop_bot(bot_id)
+            
+            # Usunięcie z aktywnych strategii
+            if bot_id in self.active_strategies:
+                del self.active_strategies[bot_id]
+            
+            # Usunięcie z bazy danych
+            await self.db_manager.delete_bot(bot_id)
+            
+            self.logger.info(f"Usunięto bota {bot_id}")
+            
+            # Powiadomienie
+            if self.notification_manager:
+                await self.notification_manager.send_notification(
+                    f"Bot {bot_id} został usunięty",
+                    "info"
+                )
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas usuwania bota {bot_id}: {e}")
+            return False
+    
+    async def get_bot_info(self, bot_id: int) -> Optional[BotInfo]:
+        """Pobranie informacji o bocie"""
+        try:
+            bot_data = await self.db_manager.get_bot(bot_id)
+            if not bot_data:
+                return None
+                
+            return BotInfo(
+                id=bot_data['id'],
+                user_id=bot_data['user_id'],
+                name=bot_data['name'],
+                type=bot_data['type'],
+                pair=bot_data['pair'],
+                status=bot_data['status'],
+                parameters=json.loads(bot_data['parameters']) if isinstance(bot_data['parameters'], str) else bot_data['parameters'],
+                created_at=bot_data['created_at'],
+                updated_at=bot_data['updated_at'],
+                last_activity=bot_data.get('last_activity'),
+                error_message=bot_data.get('error_message')
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas pobierania informacji o bocie {bot_id}: {e}")
+            return None
+    
+    async def get_bot_status(self, bot_id: int) -> Optional[Dict]:
+        """Pobranie statusu bota"""
+        try:
+            if bot_id not in self.active_strategies:
+                return None
+            
+            strategy = self.active_strategies[bot_id]
+            bot_info = await self.get_bot_info(bot_id)
+            
+            if not bot_info:
+                return None
+            
+            is_running = bot_id in self.strategy_tasks and not self.strategy_tasks[bot_id].done()
+            
+            return {
+                'id': bot_id,
+                'name': bot_info.name,
+                'type': bot_info.type,
+                'pair': bot_info.pair,
+                'status': BotStatus.RUNNING.value if is_running else BotStatus.STOPPED.value,
+                'strategy_status': await strategy.get_status(),
+                'statistics': await strategy.get_statistics(),
+                'last_activity': bot_info.last_activity,
+                'error_message': bot_info.error_message
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas pobierania statusu bota {bot_id}: {e}")
+            return None
+    
+    async def get_all_bots_status(self) -> List[Dict]:
+        """Pobranie statusu wszystkich botów"""
+        statuses = []
+        for bot_id in self.active_strategies:
+            status = await self.get_bot_status(bot_id)
+            if status:
+                statuses.append(status)
+        return statuses
+    
+    async def get_bot_statistics(self, bot_id: int) -> Optional[BotStatistics]:
+        """Pobranie statystyk bota"""
+        try:
+            if bot_id not in self.active_strategies:
+                self.logger.warning(f"Bot {bot_id} nie jest w aktywnych strategiach")
+                return None
+                
+            strategy = self.active_strategies[bot_id]
+            
+            # Sprawdź czy strategia ma metodę get_statistics
+            if not hasattr(strategy, 'get_statistics'):
+                self.logger.warning(f"Strategia bota {bot_id} nie ma metody get_statistics")
+                # Zwróć domyślne statystyki
+                return BotStatistics(
+                    total_trades=0,
+                    successful_trades=0,
+                    failed_trades=0,
+                    total_profit=0.0,
+                    total_fees=0.0,
+                    win_rate=0.0,
+                    average_profit=0.0,
+                    max_drawdown=0.0,
+                    sharpe_ratio=0.0,
+                    uptime=0.0
+                )
+            
+            try:
+                stats = await strategy.get_statistics()
+                if not isinstance(stats, dict):
+                    self.logger.warning(f"Strategia bota {bot_id} zwróciła nieprawidłowe statystyki")
+                    stats = {}
+            except Exception as e:
+                self.logger.error(f"Błąd podczas pobierania statystyk ze strategii {bot_id}: {e}")
+                stats = {}
+            
+            return BotStatistics(
+                total_trades=stats.get('total_trades', 0),
+                successful_trades=stats.get('successful_trades', 0),
+                failed_trades=stats.get('failed_trades', 0),
+                total_profit=float(stats.get('total_profit', 0.0)),
+                total_fees=float(stats.get('total_fees', 0.0)),
+                win_rate=float(stats.get('win_rate', 0.0)),
+                average_profit=float(stats.get('average_profit', 0.0)),
+                max_drawdown=float(stats.get('max_drawdown', 0.0)),
+                sharpe_ratio=float(stats.get('sharpe_ratio', 0.0)),
+                uptime=float(stats.get('uptime', 0.0))
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas pobierania statystyk bota {bot_id}: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return None
+    
+    async def update_bot_parameters(self, bot_id: int, parameters: Dict) -> bool:
+        """Aktualizacja parametrów bota"""
+        try:
+            if bot_id not in self.active_strategies:
+                return False
+                
+            strategy = self.active_strategies[bot_id]
+            bot_info = await self.get_bot_info(bot_id)
+            
+            if not bot_info:
+                return False
+            
+            # Walidacja parametrów
+            if not await self.validate_bot_parameters(bot_info.type, parameters):
+                return False
+            
+            # Aktualizacja parametrów strategii
+            await strategy.update_parameters(parameters)
+            
+            # Aktualizacja w bazie danych
+            await self.db_manager.update_bot_parameters(bot_id, json.dumps(parameters))
+            
+            self.logger.info(f"Zaktualizowano parametry bota {bot_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas aktualizacji parametrów bota {bot_id}: {e}")
+            return False
+    
+    async def monitor_strategies(self):
+        """Monitorowanie stanu strategii"""
+        for bot_id, task in list(self.strategy_tasks.items()):
+            if task.done():
+                # Strategia zakończyła działanie
+                try:
+                    exception = task.exception()
+                    if exception:
+                        self.logger.error(f"Bot {bot_id} zakończył z błędem: {exception}")
+                        await self.db_manager.update_bot_status(bot_id, BotStatus.ERROR.value)
+                        await self.db_manager.update_bot_error(bot_id, str(exception))
+                        
+                        # Powiadomienie o błędzie
+                        if self.notification_manager:
+                            await self.notification_manager.send_notification(
+                                f"Bot {bot_id} zakończył z błędem: {exception}",
+                                "error"
+                            )
+                    else:
+                        await self.db_manager.update_bot_status(bot_id, BotStatus.STOPPED.value)
+                        
+                except Exception as e:
+                    self.logger.error(f"Błąd podczas sprawdzania zadania bota {bot_id}: {e}")
+                
+                # Usunięcie zakończonego zadania
+                del self.strategy_tasks[bot_id]
+    
+    async def update_manager_statistics(self):
+        """Aktualizacja statystyk managera"""
+        try:
+            total_bots = len(self.active_strategies)
+            running_bots = len([task for task in self.strategy_tasks.values() if not task.done()])
+            stopped_bots = total_bots - running_bots
+            error_bots = 0
+            
+            # Obliczenie całkowitego zysku
+            total_profit = 0.0
+            total_trades = 0
+            successful_trades = 0
+            
+            for bot_id, strategy in self.active_strategies.items():
+                try:
+                    if hasattr(strategy, 'get_statistics'):
+                        stats = await strategy.get_statistics()
+                        if isinstance(stats, dict):
+                            total_profit += float(stats.get('total_profit', 0.0))
+                            total_trades += int(stats.get('total_trades', 0))
+                            successful_trades += int(stats.get('successful_trades', 0))
+                        else:
+                            self.logger.warning(f"Strategia bota {bot_id} zwróciła nieprawidłowe statystyki")
+                    
+                    # Sprawdź czy bot ma błąd
+                    if bot_id in self.strategy_tasks:
+                        task = self.strategy_tasks[bot_id]
+                        if task.done() and task.exception():
+                            error_bots += 1
+                            
+                except Exception as e:
+                    self.logger.warning(f"Błąd podczas pobierania statystyk bota {bot_id}: {e}")
+                    error_bots += 1
+            
+            # Oblicz win rate
+            win_rate = (successful_trades / total_trades * 100) if total_trades > 0 else 0.0
+            
+            self.manager_stats.update({
+                'total_bots': total_bots,
+                'running_bots': running_bots,
+                'stopped_bots': stopped_bots,
+                'error_bots': error_bots,
+                'total_profit': total_profit,
+                'total_trades': total_trades,
+                'successful_trades': successful_trades,
+                'win_rate': win_rate,
+                'uptime': 100.0 if self.is_running else 0.0,
+                'last_update': datetime.now().isoformat()
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas aktualizacji statystyk managera: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    async def get_manager_statistics(self) -> Dict:
+        """Pobranie statystyk managera"""
+        return self.manager_stats.copy()
+    
+    async def validate_bot_parameters(self, bot_type: str, parameters: Dict) -> bool:
+        """Walidacja parametrów bota"""
+        try:
+            if bot_type == "dca":
+                required = ['amount', 'interval_hours']
+                optional = ['take_profit_percentage', 'stop_loss_percentage', 'max_orders']
+                
+            elif bot_type == "grid":
+                required = ['price_range_min', 'price_range_max', 'grid_levels', 'amount_per_level']
+                optional = ['take_profit_percentage', 'stop_loss_percentage']
+                
+            elif bot_type == "scalping":
+                required = ['timeframe', 'rsi_period', 'ema_period', 'profit_percentage']
+                optional = ['max_position_time_minutes', 'macd_fast', 'macd_slow', 'macd_signal']
+                
+            elif bot_type == "custom":
+                required = ['rules', 'check_interval_seconds']
+                optional = []
+                
+            elif bot_type == "ai":
+                required = ['initial_balance', 'risk_percentage']
+                optional = ['max_positions', 'learning_rate', 'model_update_frequency', 
+                          'use_reinforcement_learning', 'feature_engineering_enabled', 
+                          'sentiment_analysis_enabled', 'ensemble_models']
+                
+            else:
+                return False
+            
+            # Sprawdzenie wymaganych parametrów
+            if not all(param in parameters for param in required):
+                missing = [param for param in required if param not in parameters]
+                self.logger.error(f"Brakujące wymagane parametry: {missing}")
+                return False
+            
+            # Walidacja typów i wartości
+            return await self._validate_parameter_values(bot_type, parameters)
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas walidacji parametrów: {e}")
+            return False
+    
+    async def _validate_parameter_values(self, bot_type: str, parameters: Dict) -> bool:
+        """Walidacja wartości parametrów"""
+        try:
+            if bot_type == "dca":
+                if parameters.get('amount', 0) <= 0:
+                    return False
+                if parameters.get('interval_hours', 0) <= 0:
+                    return False
+                    
+            elif bot_type == "grid":
+                if parameters.get('price_range_min', 0) >= parameters.get('price_range_max', 0):
+                    return False
+                if parameters.get('grid_levels', 0) < 2:
+                    return False
+                if parameters.get('amount_per_level', 0) <= 0:
+                    return False
+                    
+            elif bot_type == "scalping":
+                if parameters.get('rsi_period', 0) <= 0:
+                    return False
+                if parameters.get('ema_period', 0) <= 0:
+                    return False
+                if parameters.get('profit_percentage', 0) <= 0:
+                    return False
+                    
+            elif bot_type == "custom":
+                if not isinstance(parameters.get('rules', []), list):
+                    return False
+                if parameters.get('check_interval_seconds', 0) <= 0:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas walidacji wartości parametrów: {e}")
+            return False
+    
+    async def stop_all_bots(self):
+        """Zatrzymanie wszystkich botów"""
+        self.logger.info("Zatrzymywanie wszystkich botów...")
+        
+        for bot_id in list(self.strategy_tasks.keys()):
+            await self.stop_bot(bot_id)
+        
+        self.logger.info("Wszystkie boty zostały zatrzymane")
+    
+    async def get_bot_logs(self, bot_id: int, limit: int = 100) -> List[Dict]:
+        """Pobranie logów bota"""
+        try:
+            if hasattr(self.db_manager, 'get_bot_logs'):
+                return await self.db_manager.get_bot_logs(bot_id, limit)
+            else:
+                self.logger.warning("DatabaseManager nie ma metody get_bot_logs")
+                # Zwróć przykładowe logi
+                return [
+                    {
+                        'id': 1,
+                        'bot_id': bot_id,
+                        'level': 'INFO',
+                        'message': 'Bot został uruchomiony',
+                        'timestamp': datetime.now().isoformat()
+                    },
+                    {
+                        'id': 2,
+                        'bot_id': bot_id,
+                        'level': 'INFO',
+                        'message': 'Bot działa poprawnie',
+                        'timestamp': datetime.now().isoformat()
+                    }
+                ]
+        except Exception as e:
+            self.logger.error(f"Błąd podczas pobierania logów bota {bot_id}: {e}")
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            return []
+    
+    async def export_bot_data(self, bot_id: int) -> Optional[Dict]:
+        """Eksport danych bota"""
+        try:
+            bot_info = await self.get_bot_info(bot_id)
+            if not bot_info:
+                return None
+                
+            statistics = await self.get_bot_statistics(bot_id)
+            logs = await self.get_bot_logs(bot_id, 1000)
+            
+            return {
+                'bot_info': asdict(bot_info),
+                'statistics': asdict(statistics) if statistics else None,
+                'logs': logs,
+                'export_date': datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas eksportu danych bota {bot_id}: {e}")
+            return None

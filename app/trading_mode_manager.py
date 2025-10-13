@@ -1,0 +1,859 @@
+"""
+Trading Mode Manager - Zarządzanie trybami handlowymi (Paper Trading / Live Trading)
+"""
+
+import asyncio
+import logging
+import threading
+from datetime import datetime
+from enum import Enum
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass, field
+import json
+
+# Importy lokalne
+from utils.config_manager import ConfigManager
+from core.integrated_data_manager import get_integrated_data_manager
+
+
+class TradingMode(Enum):
+    """Tryby handlowe"""
+    PAPER = "paper"
+    LIVE = "live"
+
+
+@dataclass
+class PaperBalance:
+    """Saldo w trybie Paper Trading"""
+    symbol: str
+    balance: float = 0.0
+    locked: float = 0.0
+    avg_price: float = 0.0
+    
+    @property
+    def free(self) -> float:
+        """Dostępne środki"""
+        return max(0.0, self.balance - self.locked)
+    
+    def to_dict(self) -> Dict:
+        """Konwertuje do słownika"""
+        return {
+            'symbol': self.symbol,
+            'balance': self.balance,
+            'locked': self.locked,
+            'avg_price': self.avg_price,
+            'free': self.free
+        }
+
+
+@dataclass
+class TradingOrder:
+    """Zlecenie handlowe"""
+    id: str
+    symbol: str
+    side: str  # 'buy' lub 'sell'
+    amount: float
+    price: float
+    order_type: str = 'market'  # 'market' lub 'limit'
+    status: str = 'pending'  # 'pending', 'filled', 'cancelled'
+    timestamp: datetime = field(default_factory=datetime.now)
+    mode: TradingMode = TradingMode.PAPER
+    exchange: str = 'binance'
+    fee: float = 0.0
+    filled_amount: float = 0.0
+    
+    def to_dict(self) -> Dict:
+        """Konwertuje do słownika"""
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'side': self.side,
+            'amount': self.amount,
+            'price': self.price,
+            'order_type': self.order_type,
+            'status': self.status,
+            'timestamp': self.timestamp.isoformat() if isinstance(self.timestamp, datetime) else self.timestamp,
+            'mode': self.mode.value if isinstance(self.mode, TradingMode) else self.mode,
+            'exchange': self.exchange,
+            'fee': self.fee,
+            'filled_amount': self.filled_amount
+        }
+
+
+@dataclass
+class RiskLimits:
+    """Limity ryzyka"""
+    max_position_size: float = 0.0
+    max_daily_loss: float = 0.0
+    max_drawdown: float = 0.0
+    stop_loss_percent: float = 0.0
+    take_profit_percent: float = 0.0
+    
+    def to_dict(self) -> Dict:
+        """Konwertuje do słownika"""
+        return {
+            'max_position_size': self.max_position_size,
+            'max_daily_loss': self.max_daily_loss,
+            'max_drawdown': self.max_drawdown,
+            'stop_loss_percent': self.stop_loss_percent,
+            'take_profit_percent': self.take_profit_percent
+        }
+
+
+class TradingModeManager:
+    """Manager zarządzający trybami handlowymi"""
+    
+    def __init__(self, config: ConfigManager, data_manager=None):
+        self.logger = logging.getLogger(__name__)
+        self.config = config
+        self.data_manager = data_manager or get_integrated_data_manager()
+        
+        # Synchronizacja
+        self._lock = threading.RLock()
+        self._async_lock = asyncio.Lock()
+        self._initialized = False
+        
+        # Tryb handlowy
+        self.current_mode = TradingMode.PAPER
+        
+        # Paper Trading
+        self.initial_paper_balance = 10000.0  # $10,000 USD
+        self.paper_balances: Dict[str, PaperBalance] = {}
+        self.paper_orders: List[TradingOrder] = []
+        self.paper_trades: List[Dict] = []
+        
+        # Managery
+        self.risk_manager = None
+        self.notification_manager = None
+        
+        # Cache
+        self._cache = {}
+        self._cache_ttl = 30  # 30 sekund
+        self._last_cache_update = {}
+        
+        self.logger.info("Trading Mode Manager utworzony")
+    
+    async def initialize(self) -> bool:
+        """Inicjalizuje Trading Mode Manager"""
+        try:
+            async with self._async_lock:
+                if self._initialized:
+                    return True
+                
+                self.logger.info("Inicjalizacja Trading Mode Manager...")
+                
+                # Data Manager jest już zainicjalizowany w konstruktorze
+                
+                # Inicjalizuj Risk Manager (jeśli dostępny)
+                try:
+                    from app.risk_management import RiskManager
+                    from core.database_manager import DatabaseManager
+                    
+                    db_manager = DatabaseManager()
+                    await db_manager.initialize()
+                    
+                    self.risk_manager = RiskManager(db_manager)
+                    await self.risk_manager.initialize()
+                    self.logger.info("Risk Manager zainicjalizowany")
+                except ImportError as e:
+                    self.logger.warning(f"Risk Manager niedostępny: {e}")
+                except Exception as e:
+                    self.logger.warning(f"Nie udało się zainicjalizować Risk Manager: {e}")
+                
+                # Inicjalizuj Notification Manager (jeśli dostępny)
+                try:
+                    from app.notification_manager import NotificationManager
+                    from utils.encryption import EncryptionManager
+                    
+                    encryption_manager = EncryptionManager()
+                    self.notification_manager = NotificationManager(None, encryption_manager)
+                    await self.notification_manager.initialize()
+                    self.logger.info("Notification Manager zainicjalizowany")
+                except ImportError as e:
+                    self.logger.warning(f"Notification Manager niedostępny: {e}")
+                except Exception as e:
+                    self.logger.warning(f"Nie udało się zainicjalizować Notification Manager: {e}")
+                
+                # Wczytaj tryb z konfiguracji
+                saved_mode = self.config.get_setting('app', 'trading.default_mode', 'paper')
+                try:
+                    self.current_mode = TradingMode(saved_mode)
+                except ValueError:
+                    self.current_mode = TradingMode.PAPER
+                    self.logger.warning(f"Nieprawidłowy tryb w konfiguracji: {saved_mode}, używam Paper Trading")
+                
+                # Inicjalizuj Paper Trading
+                await self.initialize_paper_trading()
+                
+                self._initialized = True
+                self.logger.info(f"Trading Mode Manager zainicjalizowany w trybie: {self.current_mode.value}")
+                return True
+                
+        except Exception as e:
+            self.logger.error(f"Błąd inicjalizacji Trading Mode Manager: {e}")
+            return False
+    
+    async def initialize_paper_trading(self):
+        """Inicjalizuje Paper Trading z początkowym saldem"""
+        try:
+            with self._lock:
+                # Sprawdź czy już są salda
+                if not self.paper_balances:
+                    # Utwórz początkowe saldo USDT
+                    self.paper_balances['USDT'] = PaperBalance(
+                        symbol='USDT',
+                        balance=self.initial_paper_balance,
+                        locked=0.0,
+                        avg_price=1.0
+                    )
+                    
+                    self.logger.info(f"Utworzono początkowe saldo Paper Trading: ${self.initial_paper_balance} USDT")
+                else:
+                    self.logger.info(f"Wczytano salda Paper Trading: {len(self.paper_balances)} walut")
+                    
+        except Exception as e:
+            self.logger.error(f"Błąd inicjalizacji Paper Trading: {e}")
+    
+    async def switch_mode(self, new_mode: TradingMode) -> bool:
+        """Przełącza tryb handlowy"""
+        try:
+            if not isinstance(new_mode, TradingMode):
+                self.logger.error(f"Nieprawidłowy tryb: {new_mode}")
+                return False
+            
+            if new_mode == self.current_mode:
+                self.logger.info(f"Tryb już ustawiony na: {new_mode.value}")
+                return True
+            
+            old_mode = self.current_mode
+            
+            # Jeśli przełączamy na Live Trading, sprawdź konfigurację
+            if new_mode == TradingMode.LIVE:
+                if not await self.verify_live_trading_setup():
+                    self.logger.error("Live Trading nie jest poprawnie skonfigurowany")
+                    return False
+            
+            with self._lock:
+                self.current_mode = new_mode
+            
+            # Zapisz nowy tryb do konfiguracji
+            self.config.set_setting('app', 'trading.default_mode', new_mode.value)
+            
+            self.logger.info(f"Przełączono tryb z {old_mode.value} na {new_mode.value}")
+            
+            # Wyślij powiadomienie o zmianie trybu
+            await self._send_mode_change_notification(old_mode, new_mode)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd przełączania trybu: {e}")
+            return False
+    
+    async def _send_mode_change_notification(self, old_mode: TradingMode, new_mode: TradingMode):
+        """Wysyła powiadomienie o zmianie trybu handlowego"""
+        try:
+            if not self.notification_manager:
+                return
+            
+            mode_names = {
+                TradingMode.PAPER: "Paper Trading",
+                TradingMode.LIVE: "Live Trading"
+            }
+            
+            old_name = mode_names.get(old_mode, old_mode.value)
+            new_name = mode_names.get(new_mode, new_mode.value)
+            
+            # Wyślij powiadomienie
+            await self.notification_manager.send_notification(
+                title="Zmiana trybu handlowego",
+                message=f"Tryb handlowy został zmieniony z {old_name} na {new_name}",
+                metadata={
+                    "old_mode": old_mode.value,
+                    "new_mode": new_mode.value,
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            
+            self.logger.info(f"Wysłano powiadomienie o zmianie trybu: {old_name} → {new_name}")
+            
+        except Exception as e:
+            self.logger.error(f"Błąd wysyłania powiadomienia o zmianie trybu: {e}")
+    
+    async def verify_live_trading_setup(self) -> bool:
+        """Sprawdza czy Live Trading jest poprawnie skonfigurowany"""
+        try:
+            # Sprawdź czy są skonfigurowane klucze API
+            exchanges_config = self.config.get_setting('app', 'exchanges', {})
+            
+            configured_exchanges = []
+            for exchange_name, config in exchanges_config.items():
+                if isinstance(config, dict) and config.get('api_key') and config.get('api_secret'):
+                    configured_exchanges.append(exchange_name)
+            
+            if not configured_exchanges:
+                self.logger.error("Brak skonfigurowanych kluczy API dla Live Trading")
+                return False
+            
+            # Sprawdź połączenie z Data Manager
+            if hasattr(self.data_manager, 'test_connections'):
+                test_result = await self.data_manager.test_connections()
+                if not test_result:
+                    self.logger.error("Nie można nawiązać połączenia z giełdami")
+                    return False
+            
+            self.logger.info(f"Live Trading skonfigurowany dla giełd: {configured_exchanges}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd weryfikacji Live Trading: {e}")
+            return False
+    
+    async def get_current_balances(self) -> Dict[str, Dict]:
+        """Pobiera aktualne salda w zależności od trybu"""
+        try:
+            if self.current_mode == TradingMode.PAPER:
+                return await self.get_paper_balances()
+            else:
+                return await self.get_live_balances()
+                
+        except Exception as e:
+            self.logger.error(f"Błąd pobierania sald: {e}")
+            return {}
+    
+    async def get_paper_balances(self) -> Dict[str, Dict]:
+        """Pobiera salda Paper Trading"""
+        try:
+            balances = {}
+            
+            with self._lock:
+                for symbol, paper_balance in self.paper_balances.items():
+                    # Pobierz aktualną cenę
+                    current_price = 1.0
+                    if symbol != 'USDT' and self.production_data_manager:
+                        try:
+                            price_data = await self.production_data_manager.get_real_price(f"{symbol}/USDT")
+                            if price_data:
+                                current_price = float(price_data)
+                            else:
+                                current_price = paper_balance.avg_price if paper_balance.avg_price > 0 else 1.0
+                        except Exception:
+                            current_price = paper_balance.avg_price if paper_balance.avg_price > 0 else 1.0
+                    
+                    # Oblicz wartość USD
+                    usd_value = paper_balance.balance * current_price
+                    
+                    # Oblicz zmianę 24h
+                    change_24h = await self.calculate_24h_change(symbol, current_price)
+                    
+                    balances[symbol] = {
+                        'balance': paper_balance.balance,
+                        'locked': paper_balance.locked,
+                        'free': paper_balance.free,
+                        'usd_value': usd_value,
+                        'price': current_price,
+                        'change_24h': change_24h,
+                        'avg_price': paper_balance.avg_price,
+                        'mode': 'paper'
+                    }
+            
+            return balances
+            
+        except Exception as e:
+            self.logger.error(f"Błąd pobierania sald Paper Trading: {e}")
+            return {}
+    
+    async def get_live_balances(self) -> Dict[str, Dict]:
+        """Pobiera prawdziwe salda z API giełd"""
+        try:
+            if not hasattr(self.data_manager, 'get_real_balance'):
+                self.logger.warning("Data Manager nie obsługuje prawdziwych sald")
+                return {}
+            
+            # Pobierz prawdziwe saldo
+            raw_balance = await self.data_manager.get_real_balance()
+            
+            if not raw_balance:
+                self.logger.warning("Nie można pobrać sald z API")
+                return {}
+            
+            balances = {}
+            
+            # Przetwórz dane z API giełdy
+            for symbol, balance_data in raw_balance.items():
+                if isinstance(balance_data, dict):
+                    free_balance = float(balance_data.get('free', 0))
+                    locked_balance = float(balance_data.get('used', 0))
+                    total_balance = float(balance_data.get('total', free_balance + locked_balance))
+                    
+                    # Pomiń waluty z zerowym saldem
+                    if total_balance > 0:
+                        # Pobierz aktualną cenę
+                        current_price = 1.0
+                        if symbol != 'USDT':
+                            try:
+                                price_data = await self.data_manager.get_real_price(f"{symbol}/USDT")
+                                if price_data:
+                                    current_price = float(price_data)
+                            except Exception:
+                                pass
+                        
+                        # Oblicz wartość USD
+                        usd_value = total_balance * current_price
+                        
+                        # Oblicz zmianę 24h
+                        change_24h = await self.calculate_24h_change(symbol, current_price)
+                        
+                        balances[symbol] = {
+                            'balance': total_balance,
+                            'locked': locked_balance,
+                            'free': free_balance,
+                            'usd_value': usd_value,
+                            'price': current_price,
+                            'change_24h': change_24h,
+                            'mode': 'live'
+                        }
+            
+            return balances
+            
+        except Exception as e:
+            self.logger.error(f"Błąd pobierania prawdziwych sald: {e}")
+            return {}
+    
+    async def calculate_24h_change(self, symbol: str, current_price: float) -> float:
+        """Oblicza zmianę ceny w ciągu 24h"""
+        try:
+            if symbol == 'USDT' or not self.production_data_manager:
+                return 0.0
+            
+            # Pobierz ticker z danymi 24h
+            ticker = await self.production_data_manager.get_real_ticker(f"{symbol}/USDT")
+            if ticker and isinstance(ticker, dict) and 'percentage' in ticker:
+                return float(ticker['percentage'])
+            
+            return 0.0
+            
+        except Exception as e:
+            self.logger.error(f"Błąd obliczania zmiany 24h dla {symbol}: {e}")
+            return 0.0
+    
+    async def place_order(self, symbol: str, side: str, amount: float, 
+                         price: Optional[float] = None, order_type: str = 'market') -> Optional[TradingOrder]:
+        """Składa zlecenie w odpowiednim trybie"""
+        try:
+            # Dodaj trace log przed składaniem zlecenia
+            self.logger.debug(f"TRACE: order.submitted - symbol={symbol}, side={side}, amount={amount}, type={order_type}, mode={self.current_mode.value}")
+            
+            # Walidacja parametrów
+            if not self._validate_order_params(symbol, side, amount, price, order_type):
+                return None
+            
+            if self.current_mode == TradingMode.PAPER:
+                return await self.place_paper_order(symbol, side, amount, price, order_type)
+            else:
+                return await self.place_live_order(symbol, side, amount, price, order_type)
+                
+        except Exception as e:
+            self.logger.error(f"Błąd składania zlecenia: {e}")
+            return None
+    
+    def _validate_order_params(self, symbol: str, side: str, amount: float, 
+                              price: Optional[float], order_type: str) -> bool:
+        """Waliduje parametry zlecenia"""
+        try:
+            # Sprawdź symbol
+            if not symbol or '/' not in symbol:
+                self.logger.error(f"Nieprawidłowy symbol: {symbol}")
+                return False
+            
+            # Sprawdź stronę
+            if side not in ['buy', 'sell']:
+                self.logger.error(f"Nieprawidłowa strona zlecenia: {side}")
+                return False
+            
+            # Sprawdź ilość
+            if amount <= 0:
+                self.logger.error(f"Nieprawidłowa ilość: {amount}")
+                return False
+            
+            # Sprawdź typ zlecenia
+            if order_type not in ['market', 'limit']:
+                self.logger.error(f"Nieprawidłowy typ zlecenia: {order_type}")
+                return False
+            
+            # Sprawdź cenę dla zleceń limit
+            if order_type == 'limit' and (price is None or price <= 0):
+                self.logger.error(f"Nieprawidłowa cena dla zlecenia limit: {price}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd walidacji parametrów zlecenia: {e}")
+            return False
+    
+    async def place_paper_order(self, symbol: str, side: str, amount: float, 
+                               price: Optional[float] = None, order_type: str = 'market') -> Optional[TradingOrder]:
+        """Składa zlecenie w trybie Paper Trading"""
+        try:
+            # Pobierz aktualną cenę rynkową
+            if not self.production_data_manager:
+                self.logger.error("Production Data Manager nie jest dostępny")
+                return None
+            
+            market_price = await self.production_data_manager.get_real_price(symbol)
+            if market_price is None:
+                self.logger.error(f"Nie można pobrać ceny dla {symbol}")
+                return None
+            
+            market_price = float(market_price)
+            
+            # Ustaw cenę zlecenia
+            order_price = price if price and order_type == 'limit' else market_price
+            
+            # Sprawdź czy mamy wystarczające środki
+            if not await self.check_paper_balance(symbol, side, amount, order_price):
+                self.logger.error("Niewystarczające środki dla zlecenia Paper Trading")
+                return None
+            
+            # Sprawdź limity ryzyka
+            if self.risk_manager:
+                try:
+                    risk_check = await self.risk_manager.check_order_risk(
+                        bot_id=0,  # Paper trading bot ID
+                        symbol=symbol,
+                        side=side,
+                        amount=amount,
+                        price=order_price
+                    )
+                    if not risk_check:
+                        self.logger.warning(f"Zlecenie odrzucone przez system zarządzania ryzykiem: {symbol}")
+                        return None
+                except Exception as e:
+                    self.logger.warning(f"Błąd sprawdzania ryzyka: {e}")
+            
+            # Utwórz zlecenie
+            order = TradingOrder(
+                id=f"paper_{int(datetime.now().timestamp() * 1000)}",
+                symbol=symbol,
+                side=side,
+                amount=amount,
+                price=order_price,
+                order_type=order_type,
+                status='filled',  # W Paper Trading zlecenia są od razu wypełniane
+                timestamp=datetime.now(),
+                mode=TradingMode.PAPER,
+                fee=amount * order_price * 0.001  # 0.1% fee
+            )
+            
+            # Wykonaj zlecenie
+            await self.execute_paper_order(order)
+            
+            with self._lock:
+                self.paper_orders.append(order)
+            
+            self.logger.info(f"Zlecenie Paper Trading wykonane: {side} {amount} {symbol} @ ${order_price}")
+            
+            return order
+            
+        except Exception as e:
+            self.logger.error(f"Błąd zlecenia Paper Trading: {e}")
+            return None
+    
+    async def place_live_order(self, symbol: str, side: str, amount: float, 
+                              price: Optional[float] = None, order_type: str = 'market') -> Optional[TradingOrder]:
+        """Składa prawdziwe zlecenie przez API"""
+        try:
+            self.logger.info(f"Składanie prawdziwego zlecenia: {side} {amount} {symbol} ({order_type})")
+            
+            if not hasattr(self.data_manager, 'get_real_balance'):
+                self.logger.error("Data Manager nie obsługuje prawdziwych sald")
+                return None
+            
+            # Sprawdź saldo przed złożeniem zlecenia
+            balance = await self.data_manager.get_real_balance()
+            if not balance:
+                self.logger.error("Nie można pobrać salda - anulowanie zlecenia")
+                return None
+            
+            # Walidacja salda
+            if not await self.check_live_balance(symbol, side, amount, price, balance):
+                self.logger.error("Niewystarczające środki na koncie")
+                return None
+            
+            # TODO: Implementacja składania prawdziwych zleceń przez API
+            # Na razie zwracamy None
+            self.logger.warning("Składanie prawdziwych zleceń nie jest jeszcze zaimplementowane")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Błąd prawdziwego zlecenia: {e}")
+            return None
+    
+    async def check_paper_balance(self, symbol: str, side: str, amount: float, price: float) -> bool:
+        """Sprawdza czy są wystarczające środki w Paper Trading"""
+        try:
+            parts = symbol.split('/')
+            if len(parts) != 2:
+                return False
+            
+            base_symbol, quote_symbol = parts
+            
+            with self._lock:
+                if side == 'buy':
+                    # Sprawdź saldo waluty kwotowej (np. USDT)
+                    required_amount = amount * price
+                    quote_balance = self.paper_balances.get(quote_symbol)
+                    
+                    if not quote_balance or quote_balance.free < required_amount:
+                        return False
+                        
+                else:  # sell
+                    # Sprawdź saldo waluty bazowej (np. BTC)
+                    base_balance = self.paper_balances.get(base_symbol)
+                    
+                    if not base_balance or base_balance.free < amount:
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd sprawdzania salda Paper Trading: {e}")
+            return False
+    
+    async def check_live_balance(self, symbol: str, side: str, amount: float, 
+                                price: Optional[float], balance: Dict) -> bool:
+        """Sprawdza czy są wystarczające środki w Live Trading"""
+        try:
+            parts = symbol.split('/')
+            if len(parts) != 2:
+                return False
+            
+            base_symbol, quote_symbol = parts
+            
+            if not balance:
+                return False
+            
+            if side == 'buy':
+                # Sprawdź saldo waluty kwotowej (np. USDT)
+                if price is None:
+                    # Dla zleceń market pobierz aktualną cenę
+                    if not self.production_data_manager:
+                        return False
+                    price_data = await self.production_data_manager.get_real_price(symbol)
+                    if not price_data:
+                        return False
+                    price = float(price_data)
+                
+                required_amount = amount * price
+                quote_balance_data = balance.get(quote_symbol, {})
+                
+                if isinstance(quote_balance_data, dict):
+                    free_balance = float(quote_balance_data.get('free', 0))
+                    if free_balance < required_amount:
+                        self.logger.warning(f"Niewystarczające środki {quote_symbol}: {free_balance} < {required_amount}")
+                        return False
+                else:
+                    return False
+                    
+            else:  # sell
+                # Sprawdź saldo waluty bazowej (np. BTC)
+                base_balance_data = balance.get(base_symbol, {})
+                
+                if isinstance(base_balance_data, dict):
+                    free_balance = float(base_balance_data.get('free', 0))
+                    if free_balance < amount:
+                        self.logger.warning(f"Niewystarczające środki {base_symbol}: {free_balance} < {amount}")
+                        return False
+                else:
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Błąd sprawdzania salda Live Trading: {e}")
+            return False
+    
+    async def execute_paper_order(self, order: TradingOrder):
+        """Wykonuje zlecenie Paper Trading"""
+        try:
+            parts = order.symbol.split('/')
+            if len(parts) != 2:
+                raise ValueError(f"Nieprawidłowy symbol: {order.symbol}")
+            
+            base_symbol, quote_symbol = parts
+            
+            with self._lock:
+                # Upewnij się, że salda istnieją
+                if base_symbol not in self.paper_balances:
+                    self.paper_balances[base_symbol] = PaperBalance(base_symbol, 0.0)
+                if quote_symbol not in self.paper_balances:
+                    self.paper_balances[quote_symbol] = PaperBalance(quote_symbol, 0.0)
+                
+                if order.side == 'buy':
+                    # Kup: zmniejsz saldo quote, zwiększ saldo base
+                    cost = order.amount * order.price + order.fee
+                    
+                    self.paper_balances[quote_symbol].balance -= cost
+                    self.paper_balances[base_symbol].balance += order.amount
+                    
+                    # Aktualizuj średnią cenę
+                    old_balance = self.paper_balances[base_symbol].balance - order.amount
+                    if old_balance > 0:
+                        old_value = old_balance * self.paper_balances[base_symbol].avg_price
+                        new_value = order.amount * order.price
+                        total_value = old_value + new_value
+                        total_balance = self.paper_balances[base_symbol].balance
+                        self.paper_balances[base_symbol].avg_price = total_value / total_balance
+                    else:
+                        self.paper_balances[base_symbol].avg_price = order.price
+                        
+                else:  # sell
+                    # Sprzedaj: zmniejsz saldo base, zwiększ saldo quote
+                    revenue = order.amount * order.price - order.fee
+                    
+                    self.paper_balances[base_symbol].balance -= order.amount
+                    self.paper_balances[quote_symbol].balance += revenue
+                
+                # Dodaj do historii transakcji
+                trade = {
+                    'timestamp': order.timestamp.isoformat() if isinstance(order.timestamp, datetime) else order.timestamp,
+                    'symbol': order.symbol,
+                    'side': order.side,
+                    'amount': order.amount,
+                    'price': order.price,
+                    'fee': order.fee,
+                    'mode': 'paper'
+                }
+                self.paper_trades.append(trade)
+            
+        except Exception as e:
+            self.logger.error(f"Błąd wykonywania zlecenia Paper Trading: {e}")
+    
+    def get_current_mode(self) -> TradingMode:
+        """Zwraca aktualny tryb handlowy"""
+        return self.current_mode
+    
+    def is_paper_mode(self) -> bool:
+        """Sprawdza czy aktywny jest tryb Paper Trading"""
+        return self.current_mode == TradingMode.PAPER
+    
+    def is_live_mode(self) -> bool:
+        """Sprawdza czy aktywny jest tryb Live Trading"""
+        return self.current_mode == TradingMode.LIVE
+    
+    async def get_trading_statistics(self) -> Dict[str, Any]:
+        """Pobiera statystyki handlowe"""
+        try:
+            if self.current_mode == TradingMode.PAPER:
+                return await self.get_paper_statistics()
+            else:
+                return await self.get_live_statistics()
+                
+        except Exception as e:
+            self.logger.error(f"Błąd pobierania statystyk: {e}")
+            return {}
+    
+    async def get_paper_statistics(self) -> Dict[str, Any]:
+        """Pobiera statystyki Paper Trading"""
+        try:
+            total_value = 0.0
+            total_pnl = 0.0
+            
+            with self._lock:
+                for symbol, balance in self.paper_balances.items():
+                    if balance.balance > 0:
+                        current_price = 1.0
+                        if symbol != 'USDT' and self.production_data_manager:
+                            try:
+                                price_data = await self.production_data_manager.get_real_price(f"{symbol}/USDT")
+                                if price_data:
+                                    current_price = float(price_data)
+                                else:
+                                    current_price = balance.avg_price if balance.avg_price > 0 else 1.0
+                            except Exception:
+                                current_price = balance.avg_price if balance.avg_price > 0 else 1.0
+                        
+                        value = balance.balance * current_price
+                        total_value += value
+                        
+                        if symbol != 'USDT' and balance.avg_price > 0:
+                            pnl = (current_price - balance.avg_price) * balance.balance
+                            total_pnl += pnl
+            
+            return {
+                'mode': 'paper',
+                'total_value': total_value,
+                'total_pnl': total_pnl,
+                'initial_balance': self.initial_paper_balance,
+                'total_return': ((total_value - self.initial_paper_balance) / self.initial_paper_balance) * 100 if self.initial_paper_balance > 0 else 0,
+                'trades_count': len(self.paper_trades),
+                'orders_count': len(self.paper_orders)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Błąd statystyk Paper Trading: {e}")
+            return {}
+    
+    async def get_live_statistics(self) -> Dict[str, Any]:
+        """Pobiera statystyki Live Trading"""
+        try:
+            # TODO: Implementacja statystyk Live Trading
+            return {
+                'mode': 'live',
+                'total_value': 0.0,
+                'total_pnl': 0.0,
+                'trades_count': 0,
+                'orders_count': 0
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Błąd statystyk Live Trading: {e}")
+            return {}
+    
+    async def get_total_balance_usd(self) -> float:
+        """Pobiera całkowitą wartość portfela w USD"""
+        try:
+            balances = await self.get_current_balances()
+            total = sum(balance.get('usd_value', 0) for balance in balances.values())
+            return total
+        except Exception as e:
+            self.logger.error(f"Błąd pobierania całkowitego salda: {e}")
+            return 0.0
+    
+    async def close(self):
+        """Zamyka Trading Mode Manager"""
+        try:
+            self.logger.info("Zamykanie Trading Mode Manager...")
+            
+            # Data Manager jest zarządzany przez IntegratedDataManager
+            
+            if self.notification_manager:
+                await self.notification_manager.stop()
+            
+            with self._lock:
+                self._cache.clear()
+                self._last_cache_update.clear()
+            
+            self.logger.info("Trading Mode Manager zamknięty")
+            
+        except Exception as e:
+            self.logger.error(f"Błąd zamykania Trading Mode Manager: {e}")
+
+
+# Singleton instance
+_trading_mode_manager = None
+_trading_mode_manager_lock = threading.Lock()
+
+
+def get_trading_mode_manager(config: ConfigManager = None, data_manager=None) -> TradingModeManager:
+    """Pobiera singleton instance Trading Mode Manager"""
+    global _trading_mode_manager
+    
+    with _trading_mode_manager_lock:
+        if _trading_mode_manager is None:
+            if config is None or data_manager is None:
+                raise ValueError("Config Manager i Data Manager są wymagane przy pierwszym wywołaniu")
+            _trading_mode_manager = TradingModeManager(config, data_manager)
+        
+        return _trading_mode_manager

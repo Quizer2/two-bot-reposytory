@@ -1,0 +1,26 @@
+exchanges:
+  binance:
+    default:
+      rate_per_sec: 10
+      capacity: 20
+      failure_threshold: 5
+      recovery_time: 30
+    patterns:
+      - path: "/api/v3/order"
+        rate_per_sec: 5
+        capacity: 10
+      - path: "/api/v3/ticker"
+        rate_per_sec: 15
+        capacity: 30
+  okx:
+    default:
+      rate_per_sec: 8
+      capacity: 16
+      failure_threshold: 5
+      recovery_time: 30
+  bybit:
+    default:
+      rate_per_sec: 8
+      capacity: 16
+      failure_threshold: 5
+      recovery_time: 30

@@ -1,0 +1,34 @@
+{
+  "theme": {
+    "current": "dark",
+    "available": [
+      "light",
+      "dark",
+      "auto"
+    ],
+    "auto_switch": false
+  },
+  "window": {
+    "default_width": 1200,
+    "default_height": 800,
+    "min_width": 800,
+    "min_height": 600,
+    "remember_size": true,
+    "remember_position": true,
+    "start_maximized": false
+  },
+  "dashboard": {
+    "refresh_interval_seconds": 5,
+    "show_portfolio_summary": true,
+    "show_active_bots": true,
+    "show_recent_trades": true,
+    "max_recent_trades": 10
+  },
+  "notifications": {
+    "position": "top-right",
+    "duration_seconds": 5,
+    "max_notifications": 5,
+    "auto_dismiss": true,
+    "sound_enabled": true
+  }
+}

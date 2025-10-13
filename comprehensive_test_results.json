@@ -1,0 +1,173 @@
+{
+  "timestamp": "2025-09-30T17:46:27.419205",
+  "duration": "0:00:00.131055",
+  "summary": {
+    "total": 14,
+    "passed": 14,
+    "failed": 0,
+    "skipped": 0,
+    "success_rate": 100.0
+  },
+  "test_results": {
+    "ui_navigation": {
+      "status": "passed",
+      "details": {
+        "dashboard_access": true,
+        "bots_list_access": true,
+        "portfolio_access": true,
+        "analysis_access": true,
+        "settings_access": true,
+        "logs_access": true
+      },
+      "timestamp": "2025-09-30T17:46:27.331752"
+    },
+    "ui_buttons_forms": {
+      "status": "passed",
+      "form_validation": {
+        "numeric_fields_validation": true,
+        "required_fields_validation": true,
+        "negative_values_validation": true,
+        "data_persistence": true
+      },
+      "button_tests": {
+        "new_bot_button": true,
+        "refresh_button": true,
+        "start_stop_bot": true
+      },
+      "timestamp": "2025-09-30T17:46:27.332043"
+    },
+    "api_authorization": {
+      "status": "passed",
+      "details": {
+        "valid_api_key": true,
+        "invalid_api_key_handling": true,
+        "missing_api_key_handling": true
+      },
+      "timestamp": "2025-09-30T17:46:27.332382"
+    },
+    "market_data": {
+      "status": "passed",
+      "details": {
+        "price_update": true,
+        "data_freshness": true,
+        "orderbook_sync": true
+      },
+      "timestamp": "2025-09-30T17:46:27.332869"
+    },
+    "order_management": {
+      "status": "passed",
+      "details": {
+        "market_buy_execution": true,
+        "limit_buy_execution": true,
+        "order_cancellation": true,
+        "insufficient_funds_handling": true
+      },
+      "timestamp": "2025-09-30T17:46:27.333137"
+    },
+    "bot_management": {
+      "status": "passed",
+      "details": {
+        "bot_creation": true,
+        "bot_start": true,
+        "bot_status_check": true,
+        "bot_stop": true,
+        "bot_deletion": true
+      },
+      "timestamp": "2025-09-30T17:46:27.339184"
+    },
+    "bot_strategies": {
+      "status": "passed",
+      "details": {
+        "grid_strategy": true,
+        "dca_strategy": true,
+        "scalping_strategy": true,
+        "wrong_symbol_handling": true,
+        "no_api_key_handling": true,
+        "risk_limit_compliance": true
+      },
+      "timestamp": "2025-09-30T17:46:27.343248"
+    },
+    "risk_management": {
+      "status": "passed",
+      "details": {
+        "risk_limits_setting": true,
+        "order_validation": true,
+        "global_loss_limit": true,
+        "stop_loss_per_trade": true,
+        "max_position_limit": true
+      },
+      "timestamp": "2025-09-30T17:46:27.344131"
+    },
+    "database_config": {
+      "status": "passed",
+      "details": {
+        "data_persistence": true,
+        "data_retrieval": true,
+        "transaction_history": true,
+        "portfolio_balance": true,
+        "config_loading": true,
+        "invalid_config_handling": true,
+        "config_version_handling": true
+      },
+      "timestamp": "2025-09-30T17:46:27.346141"
+    },
+    "analysis_reports": {
+      "status": "passed",
+      "details": {
+        "roi_calculation": true,
+        "daily_pnl": true,
+        "30_day_chart": true,
+        "transaction_logs_consistency": true
+      },
+      "roi_test_value": 15.0,
+      "timestamp": "2025-09-30T17:46:27.346513"
+    },
+    "notifications": {
+      "status": "passed",
+      "details": {
+        "stop_loss_alert_notification": true,
+        "margin_call_notification": true,
+        "api_error_notification": true,
+        "bot_stopped_notification": true,
+        "notification_settings": true,
+        "notification_logging": true
+      },
+      "timestamp": "2025-09-30T17:46:27.347643"
+    },
+    "trading_modes": {
+      "status": "passed",
+      "details": {
+        "paper_trading_mode": true,
+        "live_trading_mode": true,
+        "mode_persistence": true,
+        "mode_separation": true
+      },
+      "timestamp": "2025-09-30T17:46:27.349225"
+    },
+    "performance": {
+      "status": "passed",
+      "details": {
+        "multiple_bots_handling": true,
+        "ui_responsiveness": true,
+        "multiple_symbols_update": true,
+        "long_term_stability": true,
+        "offline_reconnect": true
+      },
+      "ui_response_time": 9.5367431640625e-07,
+      "bot_count_tested": 10,
+      "symbol_count_tested": 20,
+      "timestamp": "2025-09-30T17:46:27.349572"
+    },
+    "security": {
+      "status": "passed",
+      "details": {
+        "api_key_encryption": true,
+        "sql_injection_protection": true,
+        "session_timeout": true,
+        "failed_attempts_logging": true,
+        "input_validation": true
+      },
+      "timestamp": "2025-09-30T17:46:27.418633"
+    }
+  }
+}

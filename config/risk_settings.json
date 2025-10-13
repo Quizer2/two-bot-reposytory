@@ -1,0 +1,15 @@
+{
+    "max_position_size": 10.0,
+    "max_open_positions": 5,
+    "max_daily_trades": 20,
+    "default_stop_loss": 2.0,
+    "default_take_profit": 4.0,
+    "trailing_stop_enabled": false,
+    "trailing_stop_distance": 1.0,
+    "max_daily_loss": 5.0,
+    "max_drawdown": 15.0,
+    "emergency_stop_enabled": true,
+    "risk_per_trade": 1.0,
+    "kelly_criterion_enabled": false,
+    "compound_profits": true
+}

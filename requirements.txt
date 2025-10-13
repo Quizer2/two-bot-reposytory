@@ -1,0 +1,10 @@
+PyQt6
+aiohttp
+sqlalchemy
+numpy
+pandas
+matplotlib
+cryptography
+pytest
+pytest-asyncio
+prometheus-client

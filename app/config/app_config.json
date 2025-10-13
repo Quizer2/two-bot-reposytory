@@ -1,0 +1,58 @@
+{
+  "app": {
+    "name": "CryptoBotDesktop",
+    "version": "1.0.0",
+    "debug": false,
+    "auto_start_bots": false,
+    "auto_restart_bots": true,
+    "offline_mode": false,
+    "language": "pl",
+    "timezone": "Europe/Warsaw"
+  },
+  "database": {
+    "path": "data/database.db",
+    "backup_interval_hours": 24,
+    "max_backups": 7,
+    "auto_backup": true,
+    "backup_path": "data/backup"
+  },
+  "logging": {
+    "level": "INFO",
+    "max_file_size_mb": 10,
+    "max_files": 5,
+    "log_to_console": true,
+    "log_to_file": true,
+    "log_to_database": true,
+    "cleanup_days": 30
+  },
+  "security": {
+    "session_timeout_minutes": 60,
+    "max_login_attempts": 5,
+    "lockout_duration_minutes": 15,
+    "require_password_change_days": 90,
+    "min_password_length": 8,
+    "encryption_algorithm": "AES-256",
+    "auto_lock_minutes": 30
+  },
+  "exchanges": {
+    "default": "binance",
+    "available": [
+      "binance",
+      "bybit",
+      "kucoin",
+      "coinbase",
+      "kraken",
+      "bitfinex"
+    ]
+  },
+  "trading": {
+    "default_quote_currency": "USDT",
+    "min_order_amount": 10.0,
+    "max_order_amount": 10000.0,
+    "default_stop_loss_percent": 5.0,
+    "default_take_profit_percent": 10.0,
+    "max_open_positions": 10,
+    "paper_trading": false,
+    "slippage_tolerance_percent": 0.5
+  }
+}

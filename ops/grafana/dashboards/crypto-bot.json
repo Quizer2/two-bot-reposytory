@@ -1,0 +1,101 @@
+{
+  "title": "Crypto Bot Overview",
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Events Total",
+      "targets": [
+        {
+          "expr": "sum(events_total)"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "HTTP Requests by Endpoint",
+      "targets": [
+        {
+          "expr": "sum by (endpoint,method) (rate(http_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Rate Limit Drops",
+      "targets": [
+        {
+          "expr": "sum(rate(rate_limit_drops_total[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Open Circuits",
+      "targets": [
+        {
+          "expr": "sum(circuit_open)"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Orders by Exchange/Symbol",
+      "targets": [
+        {
+          "expr": "sum by (exchange,symbol,side) (rate(orders_total[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Equity Curve",
+      "targets": [
+        {
+          "expr": "sum(increase(orders_total[1h]))",
+          "legendFormat": "Trades (proxy)"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Latency Histogram",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_requests_total[5m])) by (le))",
+          "legendFormat": "p95 latency"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Retry/Reconnect Attempts",
+      "targets": [
+        {
+          "expr": "sum by (event) (rate(events_total{event=~\"ReconnectAttempt|Retry\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Health Status (Open Circuits)",
+      "targets": [
+        {
+          "expr": "sum(circuit_open)"
+        }
+      ]
+    },
+    {
+      "type": "graph",
+      "title": "Rate Limit Utilization",
+      "targets": [
+        {
+          "expr": "sum(rate(rate_limit_drops_total[5m])) / sum(rate(http_requests_total[5m]))",
+          "legendFormat": "drop ratio"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

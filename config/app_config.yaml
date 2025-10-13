@@ -1,0 +1,115 @@
+app:
+  name: CryptoBotDesktop
+  version: 1.0.0
+  debug: true
+  log_level: INFO
+  production_mode: true
+database:
+  type: sqlite
+  path: data/database.db
+  backup_enabled: true
+  backup_interval: 3600
+  max_backups: 10
+logging:
+  enabled: true
+  log_to_file: true
+  log_to_console: true
+  log_directory: data/logs
+  max_log_files: 30
+  log_rotation: daily
+  log_format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+ui:
+  theme: dark
+  language: pl
+  window:
+    width: 1200
+    height: 800
+    resizable: true
+    center_on_screen: true
+  charts:
+    default_timeframe: 1h
+    max_candles: 1000
+    update_interval: 5
+startup:
+  run_tests: true
+  test_timeout: 30
+  critical_tests_only: true
+  fail_on_test_failure: false
+exchanges:
+  binance:
+    enabled: true
+    api_key: ''
+    api_secret: ''
+    testnet: true
+    sandbox: true
+    public_only: true
+  bybit:
+    enabled: true
+    api_key: ''
+    api_secret: ''
+    testnet: true
+    sandbox: true
+    public_only: true
+  kucoin:
+    enabled: true
+    api_key: ''
+    api_secret: ''
+    passphrase: ''
+    sandbox: true
+    public_only: true
+  coinbase:
+    enabled: true
+    api_key: ''
+    api_secret: ''
+    passphrase: ''
+    sandbox: true
+    public_only: true
+trading:
+  default_mode: paper
+  paper_trading:
+    initial_balance: 10000.0
+    currency: USDT
+    commission: 0.001
+    slippage: 0.0005
+  live_trading:
+    enabled: false
+    require_confirmation: true
+    max_order_value: 1000.0
+risk_management:
+  enabled: true
+  max_daily_loss: 5.0
+  max_position_size: 10.0
+  max_open_positions: 10
+  max_drawdown: 15.0
+  stop_loss_enabled: true
+  take_profit_enabled: true
+  trailing_stop_enabled: false
+strategies:
+  default_timeframe: 1h
+  max_concurrent_bots: 5
+  auto_restart: true
+notifications:
+  enabled: true
+  email:
+    enabled: false
+    smtp_server: ''
+    smtp_port: 587
+    username: ''
+    password: ''
+  telegram:
+    enabled: false
+    bot_token: ''
+    chat_id: ''
+  discord:
+    enabled: false
+    webhook_url: ''
+backtest:
+  default_period_days: 30
+  commission: 0.001
+  slippage: 0.0005
+  initial_balance: 10000.0
+api:
+  rate_limit_enabled: true
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 1

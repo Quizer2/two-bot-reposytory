@@ -1,0 +1,216 @@
+# CryptoBotDesktop - Przykładowa konfiguracja aplikacji
+# Skopiuj ten plik jako app_config.yaml i dostosuj do swoich potrzeb
+
+# Podstawowe ustawienia aplikacji
+app:
+  name: "CryptoBotDesktop"
+  version: "1.0.0"
+  debug: false
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  
+# Ustawienia bazy danych
+database:
+  type: "sqlite"
+  path: "data/database/cryptobot.db"
+  backup_enabled: true
+  backup_interval: 3600  # sekundy
+  max_backups: 10
+
+# Ustawienia logowania
+logging:
+  enabled: true
+  log_to_file: true
+  log_to_console: true
+  log_directory: "data/logs"
+  max_log_files: 30
+  log_rotation: "daily"
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Ustawienia interfejsu użytkownika
+ui:
+  theme: "dark"  # dark, light, auto
+  language: "pl"  # pl, en
+  window:
+    width: 1200
+    height: 800
+    resizable: true
+    center_on_screen: true
+  charts:
+    default_timeframe: "1h"
+    max_candles: 1000
+    update_interval: 5  # sekundy
+
+# Ustawienia giełd
+exchanges:
+  # Binance
+  binance:
+    enabled: false
+    api_key: ""  # Zostanie zaszyfrowane
+    api_secret: ""  # Zostanie zaszyfrowane
+    testnet: true
+    rate_limit: 1200  # requests per minute
+    
+  # Bybit
+  bybit:
+    enabled: false
+    api_key: ""
+    api_secret: ""
+    testnet: true
+    rate_limit: 600
+    
+  # Coinbase
+  coinbase:
+    enabled: false
+    api_key: ""
+    api_secret: ""
+    passphrase: ""
+    sandbox: true
+    
+  # KuCoin
+  kucoin:
+    enabled: false
+    api_key: ""
+    api_secret: ""
+    passphrase: ""
+    sandbox: true
+
+# Ustawienia zarządzania ryzykiem
+risk_management:
+  enabled: true
+  max_daily_loss: 5.0  # procent
+  max_position_size: 10.0  # procent portfela
+  stop_loss_enabled: true
+  take_profit_enabled: true
+  trailing_stop_enabled: false
+  
+  # Limity pozycji
+  max_open_positions: 5
+  max_positions_per_pair: 1
+  
+  # Zarządzanie kapitałem
+  position_sizing:
+    method: "fixed_percentage"  # fixed_amount, fixed_percentage, kelly
+    percentage: 2.0  # procent kapitału na pozycję
+    min_amount: 10.0  # minimalna kwota USDT
+    max_amount: 1000.0  # maksymalna kwota USDT
+
+# Ustawienia strategii handlowych
+strategies:
+  # DCA (Dollar Cost Averaging)
+  dca:
+    enabled: true
+    default_settings:
+      base_order_size: 10.0  # USDT
+      safety_order_size: 20.0  # USDT
+      max_safety_orders: 5
+      price_deviation: 2.5  # procent
+      safety_order_step_scale: 1.2
+      take_profit: 1.5  # procent
+      
+  # Grid Trading
+  grid:
+    enabled: true
+    default_settings:
+      grid_size: 10
+      grid_spacing: 1.0  # procent
+      upper_limit: 5.0  # procent powyżej ceny
+      lower_limit: 5.0  # procent poniżej ceny
+      
+  # Scalping
+  scalping:
+    enabled: false
+    default_settings:
+      timeframe: "1m"
+      take_profit: 0.5  # procent
+      stop_loss: 0.3  # procent
+      max_trades_per_hour: 10
+
+# Ustawienia powiadomień
+notifications:
+  enabled: true
+  
+  # Email
+  email:
+    enabled: false
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    username: ""
+    password: ""  # Zostanie zaszyfrowane
+    from_address: ""
+    to_addresses: []
+    
+  # SMS (Twilio)
+  sms:
+    enabled: false
+    account_sid: ""
+    auth_token: ""  # Zostanie zaszyfrowane
+    from_number: ""
+    to_numbers: []
+    
+  # Push notifications
+  push:
+    enabled: true
+    sound: true
+    
+  # Discord webhook
+  discord:
+    enabled: false
+    webhook_url: ""
+    
+  # Telegram
+  telegram:
+    enabled: false
+    bot_token: ""  # Zostanie zaszyfrowane
+    chat_ids: []
+
+# Ustawienia bezpieczeństwa
+security:
+  encryption:
+    enabled: true
+    algorithm: "AES-256"
+    key_derivation: "PBKDF2"
+    iterations: 100000
+    
+  # Automatyczne blokowanie
+  auto_lock:
+    enabled: true
+    timeout: 1800  # sekundy (30 minut)
+    
+  # Backup
+  backup:
+    enabled: true
+    encrypt_backups: true
+    backup_location: "data/backups"
+    auto_backup_interval: 86400  # sekundy (24 godziny)
+
+# Ustawienia wydajności
+performance:
+  # Wielowątkowość
+  threading:
+    max_workers: 4
+    
+  # Cache
+  cache:
+    enabled: true
+    max_size: 1000
+    ttl: 300  # sekundy
+    
+  # Optymalizacje
+  optimizations:
+    lazy_loading: true
+    compress_data: true
+    batch_operations: true
+
+# Ustawienia deweloperskie
+development:
+  debug_mode: false
+  profiling: false
+  mock_exchanges: false
+  test_data: false
+  
+# Ustawienia aktualizacji
+updates:
+  auto_check: true
+  check_interval: 86400  # sekundy (24 godziny)
+  auto_download: false
+  backup_before_update: true

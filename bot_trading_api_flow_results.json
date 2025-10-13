@@ -1,0 +1,36 @@
+{
+  "timestamp": "2025-09-30T20:27:14.124824",
+  "test_type": "Bot → TradingEngine → API → Exchange Flow",
+  "results": [
+    {
+      "test": "TradingEngine Availability",
+      "status": "PASSED",
+      "details": "TradingEngine methods available: ['place_order', 'cancel_order', 'get_order_status']"
+    },
+    {
+      "test": "Exchange Connectivity",
+      "status": "FAILED",
+      "details": "No exchange adapters available"
+    },
+    {
+      "test": "Order Placement Simulation",
+      "status": "FAILED",
+      "details": "Unexpected error: TradingEngine.place_order() got an unexpected keyword argument 'symbol'"
+    },
+    {
+      "test": "Bot Trading Integration",
+      "status": "SKIPPED",
+      "details": "BotManager not available"
+    },
+    {
+      "test": "Market Data Flow",
+      "status": "PASSED",
+      "details": "Market data flow OK. Methods: ['get_orderbook'], Data available: True"
+    },
+    {
+      "test": "API Rate Limiting",
+      "status": "SKIPPED",
+      "details": "No exchange adapters available"
+    }
+  ]
+}

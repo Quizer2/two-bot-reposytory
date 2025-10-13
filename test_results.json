@@ -1,0 +1,62 @@
+{
+  "timestamp": "2025-09-29T23:21:30.771055",
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "success_rate": 100.0
+  },
+  "details": {
+    "component_init": {
+      "status": "passed",
+      "components_initialized": 7
+    },
+    "config_flow": {
+      "status": "passed",
+      "config_sections": 16,
+      "components_with_config": 1
+    },
+    "market_data_flow": {
+      "status": "passed",
+      "test_symbol": "BTC/USDT",
+      "data_updated": true
+    },
+    "portfolio_data_flow": {
+      "status": "passed",
+      "portfolio_updated": true,
+      "balances_updated": true,
+      "retrieval_works": true
+    },
+    "bot_management_flow": {
+      "status": "passed",
+      "bot_created": true,
+      "bot_started": true,
+      "bot_stopped": true,
+      "data_retrieval": true
+    },
+    "risk_management_flow": {
+      "status": "passed",
+      "params_set": true,
+      "risk_check": true
+    },
+    "notification_flow": {
+      "status": "passed",
+      "notification_sent": true
+    },
+    "ui_integration": {
+      "status": "passed",
+      "components_created": 2
+    },
+    "end_to_end": {
+      "status": "passed",
+      "completed_steps": [
+        "market_data_updated",
+        "bot_created",
+        "portfolio_updated",
+        "data_consistency_check"
+      ],
+      "total_steps": 4
+    }
+  }
+}

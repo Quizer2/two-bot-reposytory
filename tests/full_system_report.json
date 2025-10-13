@@ -1,0 +1,56 @@
+{
+  "steps": [
+    {
+      "name": "Import core modules",
+      "ok": true,
+      "details": null
+    },
+    {
+      "name": "DB schema ready",
+      "ok": true,
+      "details": null
+    },
+    {
+      "name": "Event bus publish",
+      "ok": true,
+      "details": null
+    },
+    {
+      "name": "Persistence snapshot",
+      "ok": true,
+      "details": "snapshot_now"
+    },
+    {
+      "name": "TradingEngine demo smoke",
+      "ok": true,
+      "details": null
+    },
+    {
+      "name": "RiskManager _on_config_updated",
+      "ok": true,
+      "details": null
+    },
+    {
+      "name": "UnifiedDataManager.initialize",
+      "ok": true,
+      "details": null
+    },
+    {
+      "name": "UI smoke (main window import)",
+      "ok": true,
+      "details": {
+        "class": "QMainWindow"
+      }
+    },
+    {
+      "name": "Strategy engine smoke",
+      "ok": true,
+      "details": null
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0
+  }
+}

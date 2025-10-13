@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1600" height="1200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .title { font-family: Arial, sans-serif; font-size: 28px; font-weight: bold; fill: #2c3e50; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 16px; fill: #7f8c8d; }
+      .layer-title { font-family: Arial, sans-serif; font-size: 18px; font-weight: bold; fill: #34495e; }
+      .module-title { font-family: Arial, sans-serif; font-size: 13px; font-weight: bold; fill: white; }
+      .module-file { font-family: Arial, sans-serif; font-size: 10px; fill: white; }
+      .module-desc { font-family: Arial, sans-serif; font-size: 9px; fill: white; }
+      .dependency-label { font-family: Arial, sans-serif; font-size: 9px; fill: #2c3e50; }
+      
+      .presentation-layer { fill: #e67e22; stroke: #d35400; stroke-width: 2; }
+      .business-layer { fill: #9b59b6; stroke: #8e44ad; stroke-width: 2; }
+      .core-layer { fill: #3498db; stroke: #2980b9; stroke-width: 2; }
+      .data-layer { fill: #27ae60; stroke: #229954; stroke-width: 2; }
+      .external-layer { fill: #e74c3c; stroke: #c0392b; stroke-width: 2; }
+      .utils-layer { fill: #95a5a6; stroke: #7f8c8d; stroke-width: 2; }
+      
+      .dependency { stroke: #34495e; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .critical-dependency { stroke: #e74c3c; stroke-width: 2.5; fill: none; marker-end: url(#arrow-red); }
+      .config-dependency { stroke: #f39c12; stroke-width: 1.5; fill: none; marker-end: url(#arrow-orange); stroke-dasharray: 4,4; }
+      .data-dependency { stroke: #27ae60; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+    </style>
+    
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#34495e" />
+    </marker>
+    
+    <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#e74c3c" />
+    </marker>
+    
+    <marker id="arrow-orange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#f39c12" />
+    </marker>
+    
+    <marker id="arrow-green" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#27ae60" />
+    </marker>
+  </defs>
+
+  <!-- Tytuł -->
+  <text x="800" y="35" text-anchor="middle" class="title">CryptoBotDesktop - Mapa Systemu</text>
+  <text x="800" y="60" text-anchor="middle" class="subtitle">Architektura warstwowa z rzeczywistymi modułami i zależnościami</text>
+
+  <!-- WARSTWA 1: PRESENTATION LAYER -->
+  <rect x="50" y="100" width="1500" height="180" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="2" rx="10"/>
+  <text x="70" y="125" class="layer-title">WARSTWA PREZENTACJI (UI)</text>
+
+  <!-- MainWindow -->
+  <rect x="100" y="140" width="180" height="120" class="presentation-layer" rx="8"/>
+  <text x="190" y="160" text-anchor="middle" class="module-title">MainWindow</text>
+  <text x="190" y="175" text-anchor="middle" class="module-file">ui/main_window.py</text>
+  <text x="190" y="190" text-anchor="middle" class="module-desc">• Dashboard główny</text>
+  <text x="190" y="205" text-anchor="middle" class="module-desc">• Portfolio view</text>
+  <text x="190" y="220" text-anchor="middle" class="module-desc">• Risk management tab</text>
+  <text x="190" y="235" text-anchor="middle" class="module-desc">• Bot management</text>
+  <text x="190" y="250" text-anchor="middle" class="module-desc">• Settings integration</text>
+
+  <!-- UI Components -->
+  <rect x="320" y="140" width="160" height="120" class="presentation-layer" rx="8"/>
+  <text x="400" y="160" text-anchor="middle" class="module-title">UI Components</text>
+  <text x="400" y="175" text-anchor="middle" class="module-file">ui/*.py</text>
+  <text x="400" y="190" text-anchor="middle" class="module-desc">• balance_card.py</text>
+  <text x="400" y="205" text-anchor="middle" class="module-desc">• bot_config.py</text>
+  <text x="400" y="220" text-anchor="middle" class="module-desc">• portfolio.py</text>
+  <text x="400" y="235" text-anchor="middle" class="module-desc">• analysis.py</text>
+  <text x="400" y="250" text-anchor="middle" class="module-desc">• logs.py</text>
+
+  <!-- Charts & Visualization -->
+  <rect x="520" y="140" width="160" height="120" class="presentation-layer" rx="8"/>
+  <text x="600" y="160" text-anchor="middle" class="module-title">Charts & Viz</text>
+  <text x="600" y="175" text-anchor="middle" class="module-file">ui/charts.py</text>
+  <text x="600" y="190" text-anchor="middle" class="module-desc">• Price charts</text>
+  <text x="600" y="205" text-anchor="middle" class="module-desc">• Portfolio charts</text>
+  <text x="600" y="220" text-anchor="middle" class="module-desc">• Risk metrics viz</text>
+  <text x="600" y="235" text-anchor="middle" class="module-desc">• Performance graphs</text>
+
+  <!-- Settings UI -->
+  <rect x="720" y="140" width="160" height="120" class="presentation-layer" rx="8"/>
+  <text x="800" y="160" text-anchor="middle" class="module-title">Settings UI</text>
+  <text x="800" y="175" text-anchor="middle" class="module-file">ui/settings.py</text>
+  <text x="800" y="190" text-anchor="middle" class="module-desc">• API configuration</text>
+  <text x="800" y="205" text-anchor="middle" class="module-desc">• Risk parameters</text>
+  <text x="800" y="220" text-anchor="middle" class="module-desc">• Bot settings</text>
+  <text x="800" y="235" text-anchor="middle" class="module-desc">• Notifications</text>
+
+  <!-- Startup Dialog -->
+  <rect x="920" y="140" width="160" height="120" class="presentation-layer" rx="8"/>
+  <text x="1000" y="160" text-anchor="middle" class="module-title">Startup Dialog</text>
+  <text x="1000" y="175" text-anchor="middle" class="module-file">ui/startup_dialog.py</text>
+  <text x="1000" y="190" text-anchor="middle" class="module-desc">• Initial setup</text>
+  <text x="1000" y="205" text-anchor="middle" class="module-desc">• API key config</text>
+  <text x="1000" y="220" text-anchor="middle" class="module-desc">• First run wizard</text>
+
+  <!-- Bot Management UI -->
+  <rect x="1120" y="140" width="160" height="120" class="presentation-layer" rx="8"/>
+  <text x="1200" y="160" text-anchor="middle" class="module-title">Bot Management</text>
+  <text x="1200" y="175" text-anchor="middle" class="module-file">ui/bot_management.py</text>
+  <text x="1200" y="190" text-anchor="middle" class="module-desc">• Bot creation</text>
+  <text x="1200" y="205" text-anchor="middle" class="module-desc">• Strategy config</text>
+  <text x="1200" y="220" text-anchor="middle" class="module-desc">• Bot monitoring</text>
+  <text x="1200" y="235" text-anchor="middle" class="module-desc">• Performance view</text>
+
+  <!-- WARSTWA 2: BUSINESS LOGIC LAYER -->
+  <rect x="50" y="320" width="1500" height="200" fill="#f8f9fa" stroke="#bdc3c7" stroke-width="2" rx="10"/>
+  <text x="70" y="345" class="layer-title">WARSTWA LOGIKI BIZNESOWEJ (APP)</text>
+
+  <!-- Main Application -->
+  <rect x="100" y="360" width="160" height="140" class="business-layer" rx="8"/>
+  <text x="180" y="380" text-anchor="middle" class="module-title">Main App</text>
+  <text x="180" y="395" text-anchor="middle" class="module-file">app/main.py</text>
+  <text x="180" y="410" text-anchor="middle" class="module-desc">• Application startup</text>
+  <text x="180" y="425" text-anchor="middle" class="module-desc">• Initialization thread</text>
+  <text x="180" y="440" text-anchor="middle" class="module-desc">• Main event loop</text>
+  <text x="180" y="455" text-anchor="middle" class="module-desc">• Error handling</text>
+  <text x="180" y="470" text-anchor="middle" class="module-desc">• Shutdown logic</text>
+  <text x="180" y="485" text-anchor="middle" class="module-desc">• PyQt6 integration</text>
+
+  <!-- Bot Manager -->
+  <rect x="300" y="360" width="160" height="140" class="business-layer" rx="8"/>
+  <text x="380" y="380" text-anchor="middle" class="module-title">Bot Manager</text>
+  <text x="380" y="395" text-anchor="middle" class="module-file">app/bot_manager.py</text>
+  <text x="380" y="410" text-anchor="middle" class="module-desc">• Bot lifecycle</text>
+  <text x="380" y="425" text-anchor="middle" class="module-desc">• Strategy execution</text>
+  <text x="380" y="440" text-anchor="middle" class="module-desc">• Performance tracking</text>
+  <text x="380" y="455" text-anchor="middle" class="module-desc">• Bot coordination</text>
+  <text x="380" y="470" text-anchor="middle" class="module-desc">• Status monitoring</text>
+  <text x="380" y="485" text-anchor="middle" class="module-desc">• Error recovery</text>
+
+  <!-- Risk Management -->
+  <rect x="500" y="360" width="160" height="140" class="business-layer" rx="8"/>
+  <text x="580" y="380" text-anchor="middle" class="module-title">Risk Management</text>
+  <text x="580" y="395" text-anchor="middle" class="module-file">app/risk_management.py</text>
+  <text x="580" y="410" text-anchor="middle" class="module-desc">• Risk calculation</text>
+  <text x="580" y="425" text-anchor="middle" class="module-desc">• Portfolio limits</text>
+  <text x="580" y="440" text-anchor="middle" class="module-desc">• Stop-loss logic</text>
+  <text x="580" y="455" text-anchor="middle" class="module-desc">• Risk metrics</text>
+  <text x="580" y="470" text-anchor="middle" class="module-desc">• Alert triggers</text>
+  <text x="580" y="485" text-anchor="middle" class="module-desc">• Emergency controls</text>
+
+  <!-- Notification Manager -->
+  <rect x="700" y="360" width="160" height="140" class="business-layer" rx="8"/>
+  <text x="780" y="380" text-anchor="middle" class="module-title">Notifications</text>
+  <text x="780" y="395" text-anchor="middle" class="module-file">app/notifications.py</text>
+  <text x="780" y="410" text-anchor="middle" class="module-desc">• Email alerts</text>
+  <text x="780" y="425" text-anchor="middle" class="module-desc">• SMS notifications</text>
+  <text x="780" y="440" text-anchor="middle" class="module-desc">• Push notifications</text>
+  <text x="780" y="455" text-anchor="middle" class="module-desc">• Alert management</text>
+  <text x="780" y="470" text-anchor="middle" class="module-desc">• Notification queue</text>
+  <text x="780" y="485" text-anchor="middle" class="module-desc">• Delivery tracking</text>
+
+  <!-- Strategy Framework -->
+  <rect x="900" y="360" width="160" height="140" class="business-layer" rx="8"/>
+  <text x="980" y="380" text-anchor="middle" class="module-title">Strategy Framework</text>
+  <text x="980" y="395" text-anchor="middle" class="module-file">app/strategy/*</text>
+  <text x="980" y="410" text-anchor="middle" class="module-desc">• base_bot.py</text>
+  <text x="980" y="425" text-anchor="middle" class="module-desc">• dca_bot.py</text>
+  <text x="980" y="440" text-anchor="middle" class="module-desc">• grid_bot.py</text>
+  <text x="980" y="455" text-anchor="middle" class="module-desc">• scalping_bot.py</text>
+  <text x="980" y="470" text-anchor="middle" class="module-desc">• custom strategies</text>
+  <text x="980" y="485" text-anchor="middle" class="module-desc">• Strategy interface</text>
+
+  <!-- Database Manager -->
+  <rect x="1100" y="360" width="160" height="140" class="business-layer" rx="8"/>
+  <text x="1180" y="380" text-anchor="middle" class="module-title">Database Manager</text>
+  <text x="1180" y="395" text-anchor="middle" class="module-file">app/database.py</text>
+  <text x="1180" y="410" text-anchor="middle" class="module-desc">• CRUD operations</text>
+  <text x="1180" y="425" text-anchor="middle" class="module-desc">• Schema management</text>
+  <text x="1180" y="440" text-anchor="middle" class="module-desc">• Data validation</text>
+  <text x="1180" y="455" text-anchor="middle" class="module-desc">• Migration logic</text>
+  <text x="1180" y="470" text-anchor="middle" class="module-desc">• Connection pooling</text>
+  <text x="1180" y="485" text-anchor="middle" class="module-desc">• Transaction handling</text>
+
+  <!-- WARSTWA 3: CORE LAYER -->
+  <rect x="50" y="560" width="1500" height="160" fill="#eef2f7" stroke="#bdc3c7" stroke-width="2" rx="10"/>
+  <text x="70" y="585" class="layer-title">WARSTWA CORE (CENTRALNE USŁUGI)</text>
+
+  <!-- Data Manager -->
+  <rect x="200" y="600" width="200" height="100" class="core-layer" rx="8"/>
+  <text x="300" y="620" text-anchor="middle" class="module-title">Data Manager</text>
+  <text x="300" y="635" text-anchor="middle" class="module-file">core/data_manager.py</text>
+  <text x="300" y="650" text-anchor="middle" class="module-desc">• Centralne zarządzanie danymi</text>
+  <text x="300" y="665" text-anchor="middle" class="module-desc">• Cache management</text>
+  <text x="300" y="680" text-anchor="middle" class="module-desc">• Data aggregation</text>
+  <text x="300" y="695" text-anchor="middle" class="module-desc">• Fallback mechanisms</text>
+
+  <!-- Trading Engine -->
+  <rect x="450" y="600" width="200" height="100" class="core-layer" rx="8"/>
+  <text x="550" y="620" text-anchor="middle" class="module-title">Trading Engine</text>
+  <text x="550" y="635" text-anchor="middle" class="module-file">trading/bot_engines.py</text>
+  <text x="550" y="650" text-anchor="middle" class="module-desc">• Order execution</text>
+  <text x="550" y="665" text-anchor="middle" class="module-desc">• Trade management</text>
+  <text x="550" y="680" text-anchor="middle" class="module-desc">• Position tracking</text>
+  <text x="550" y="695" text-anchor="middle" class="module-desc">• Execution algorithms</text>
+
+  <!-- Risk Manager Core -->
+  <rect x="700" y="600" width="200" height="100" class="core-layer" rx="8"/>
+  <text x="800" y="620" text-anchor="middle" class="module-title">Risk Manager Core</text>
+  <text x="800" y="635" text-anchor="middle" class="module-file">trading/risk_manager.py</text>
+  <text x="800" y="650" text-anchor="middle" class="module-desc">• Risk calculations</text>
+  <text x="800" y="665" text-anchor="middle" class="module-desc">• Portfolio analysis</text>
+  <text x="800" y="680" text-anchor="middle" class="module-desc">• Limit enforcement</text>
+  <text x="800" y="695" text-anchor="middle" class="module-desc">• Risk scoring</text>
+
+  <!-- API Layer -->
+  <rect x="950" y="600" width="200" height="100" class="core-layer" rx="8"/>
+  <text x="1050" y="620" text-anchor="middle" class="module-title">API Layer</text>
+  <text x="1050" y="635" text-anchor="middle" class="module-file">api/binance_api.py</text>
+  <text x="1050" y="650" text-anchor="middle" class="module-desc">• Exchange integration</text>
+  <text x="1050" y="665" text-anchor="middle" class="module-desc">• WebSocket handling</text>
+  <text x="1050" y="680" text-anchor="middle" class="module-desc">• REST API calls</text>
+  <text x="1050" y="695" text-anchor="middle" class="module-desc">• Rate limiting</text>
+
+  <!-- WARSTWA 4: DATA & EXTERNAL -->
+  <rect x="50" y="760" width="1500" height="160" fill="#f4f6f8" stroke="#bdc3c7" stroke-width="2" rx="10"/>
+  <text x="70" y="785" class="layer-title">WARSTWA DANYCH I USŁUG ZEWNĘTRZNYCH</text>
+
+  <!-- SQLite Database -->
+  <rect x="100" y="800" width="180" height="100" class="data-layer" rx="8"/>
+  <text x="190" y="820" text-anchor="middle" class="module-title">SQLite Database</text>
+  <text x="190" y="835" text-anchor="middle" class="module-file">data/crypto_bot.db</text>
+  <text x="190" y="850" text-anchor="middle" class="module-desc">• Bots configuration</text>
+  <text x="190" y="865" text-anchor="middle" class="module-desc">• Trade history</text>
+  <text x="190" y="880" text-anchor="middle" class="module-desc">• Risk metrics</text>
+  <text x="190" y="895" text-anchor="middle" class="module-desc">• Logs & notifications</text>
+
+  <!-- Config Files -->
+  <rect x="320" y="800" width="180" height="100" class="data-layer" rx="8"/>
+  <text x="410" y="820" text-anchor="middle" class="module-title">Configuration</text>
+  <text x="410" y="835" text-anchor="middle" class="module-file">config/*.json</text>
+  <text x="410" y="850" text-anchor="middle" class="module-desc">• app_config.yaml</text>
+  <text x="410" y="865" text-anchor="middle" class="module-desc">• risk_settings.json</text>
+  <text x="410" y="880" text-anchor="middle" class="module-desc">• bot_templates.json</text>
+  <text x="410" y="895" text-anchor="middle" class="module-desc">• api_keys.enc</text>
+
+  <!-- Binance Exchange -->
+  <rect x="540" y="800" width="180" height="100" class="external-layer" rx="8"/>
+  <text x="630" y="820" text-anchor="middle" class="module-title">Binance Exchange</text>
+  <text x="630" y="835" text-anchor="middle" class="module-file">External API</text>
+  <text x="630" y="850" text-anchor="middle" class="module-desc">• Market data</text>
+  <text x="630" y="865" text-anchor="middle" class="module-desc">• Order execution</text>
+  <text x="630" y="880" text-anchor="middle" class="module-desc">• Account info</text>
+  <text x="630" y="895" text-anchor="middle" class="module-desc">• WebSocket streams</text>
+
+  <!-- Other Exchanges -->
+  <rect x="760" y="800" width="180" height="100" class="external-layer" rx="8"/>
+  <text x="850" y="820" text-anchor="middle" class="module-title">Other Exchanges</text>
+  <text x="850" y="835" text-anchor="middle" class="module-file">Future integrations</text>
+  <text x="850" y="850" text-anchor="middle" class="module-desc">• Bybit</text>
+  <text x="850" y="865" text-anchor="middle" class="module-desc">• Coinbase</text>
+  <text x="850" y="880" text-anchor="middle" class="module-desc">• KuCoin</text>
+  <text x="850" y="895" text-anchor="middle" class="module-desc">• OKX</text>
+
+  <!-- Utils Layer -->
+  <rect x="980" y="800" width="180" height="100" class="utils-layer" rx="8"/>
+  <text x="1070" y="820" text-anchor="middle" class="module-title">Utils & Helpers</text>
+  <text x="1070" y="835" text-anchor="middle" class="module-file">utils/*.py</text>
+  <text x="1070" y="850" text-anchor="middle" class="module-desc">• Logger</text>
+  <text x="1070" y="865" text-anchor="middle" class="module-desc">• Encryption</text>
+  <text x="1070" y="880" text-anchor="middle" class="module-desc">• Config manager</text>
+  <text x="1070" y="895" text-anchor="middle" class="module-desc">• Helpers</text>
+
+  <!-- Notification Services -->
+  <rect x="1200" y="800" width="180" height="100" class="external-layer" rx="8"/>
+  <text x="1290" y="820" text-anchor="middle" class="module-title">Notification Services</text>
+  <text x="1290" y="835" text-anchor="middle" class="module-file">External services</text>
+  <text x="1290" y="850" text-anchor="middle" class="module-desc">• SMTP servers</text>
+  <text x="1290" y="865" text-anchor="middle" class="module-desc">• SMS gateways</text>
+  <text x="1290" y="880" text-anchor="middle" class="module-desc">• Push services</text>
+  <text x="1290" y="895" text-anchor="middle" class="module-desc">• Webhook endpoints</text>
+
+  <!-- ZALEŻNOŚCI I PRZEPŁYWY -->
+  
+  <!-- UI to Business Logic -->
+  <path d="M 190 260 L 180 360" class="dependency"/>
+  <text x="170" y="310" class="dependency-label">App Control</text>
+
+  <path d="M 400 260 L 380 360" class="dependency"/>
+  <text x="370" y="310" class="dependency-label">Bot UI</text>
+
+  <path d="M 800 260 L 780 360" class="dependency"/>
+  <text x="770" y="310" class="dependency-label">Settings</text>
+
+  <path d="M 1200 260 L 980 360" class="dependency"/>
+  <text x="1050" y="310" class="dependency-label">Strategy UI</text>
+
+  <!-- Business Logic to Core -->
+  <path d="M 380 500 L 550 600" class="dependency"/>
+  <text x="450" y="550" class="dependency-label">Trading</text>
+
+  <path d="M 580 500 L 800 600" class="critical-dependency"/>
+  <text x="670" y="550" class="dependency-label">Risk Control</text>
+
+  <path d="M 300 500 L 300 600" class="data-dependency"/>
+  <text x="310" y="550" class="dependency-label">Data Flow</text>
+
+  <path d="M 980 500 L 550 600" class="dependency"/>
+  <text x="750" y="550" class="dependency-label">Strategy Exec</text>
+
+  <!-- Core to Data/External -->
+  <path d="M 300 700 L 190 800" class="data-dependency"/>
+  <text x="230" y="750" class="dependency-label">DB Access</text>
+
+  <path d="M 1050 700 L 630 800" class="dependency"/>
+  <text x="820" y="750" class="dependency-label">Exchange API</text>
+
+  <path d="M 800 700 L 410 800" class="config-dependency"/>
+  <text x="580" y="750" class="dependency-label">Risk Config</text>
+
+  <!-- Cross-layer dependencies -->
+  <path d="M 780 500 L 1290 800" class="dependency"/>
+  <text x="1000" y="650" class="dependency-label">Notifications</text>
+
+  <path d="M 1180 500 L 190 800" class="data-dependency"/>
+  <text x="650" y="650" class="dependency-label">Database</text>
+
+  <!-- Utils dependencies -->
+  <path d="M 1070 800 L 1070 700" class="config-dependency"/>
+  <text x="1080" y="750" class="dependency-label">Utils</text>
+
+  <!-- LEGENDA -->
+  <rect x="50" y="960" width="1500" height="200" fill="none" stroke="#bdc3c7" stroke-width="1"/>
+  <text x="70" y="980" class="subtitle">LEGENDA SYSTEMU:</text>
+  
+  <!-- Warstwy -->
+  <text x="70" y="1005" class="dependency-label">WARSTWY ARCHITEKTURY:</text>
+  <rect x="70" y="1010" width="25" height="15" class="presentation-layer"/>
+  <text x="105" y="1022" class="dependency-label">Presentation Layer (UI)</text>
+  
+  <rect x="250" y="1010" width="25" height="15" class="business-layer"/>
+  <text x="285" y="1022" class="dependency-label">Business Logic (App)</text>
+  
+  <rect x="420" y="1010" width="25" height="15" class="core-layer"/>
+  <text x="455" y="1022" class="dependency-label">Core Services</text>
+  
+  <rect x="570" y="1010" width="25" height="15" class="data-layer"/>
+  <text x="605" y="1022" class="dependency-label">Data & Storage</text>
+  
+  <rect x="720" y="1010" width="25" height="15" class="external-layer"/>
+  <text x="755" y="1022" class="dependency-label">External Services</text>
+  
+  <rect x="880" y="1010" width="25" height="15" class="utils-layer"/>
+  <text x="915" y="1022" class="dependency-label">Utils & Helpers</text>
+
+  <!-- Typy zależności -->
+  <text x="70" y="1050" class="dependency-label">TYPY ZALEŻNOŚCI:</text>
+  <line x1="70" y1="1060" x2="120" y2="1060" class="dependency"/>
+  <text x="130" y="1065" class="dependency-label">Standardowa zależność</text>
+  
+  <line x1="280" y1="1060" x2="330" y2="1060" class="critical-dependency"/>
+  <text x="340" y="1065" class="dependency-label">Krytyczna zależność (Risk Management)</text>
+  
+  <line x1="550" y1="1060" x2="600" y2="1060" class="data-dependency"/>
+  <text x="610" y="1065" class="dependency-label">Przepływ danych</text>
+  
+  <line x1="750" y1="1060" x2="800" y2="1060" class="config-dependency"/>
+  <text x="810" y="1065" class="dependency-label">Konfiguracja</text>
+
+  <!-- Kluczowe moduły -->
+  <text x="70" y="1095" class="dependency-label">KLUCZOWE MODUŁY:</text>
+  <text x="70" y="1110" class="dependency-label">• DataManager (core/data_manager.py) - Centralne zarządzanie danymi</text>
+  <text x="70" y="1125" class="dependency-label">• RiskManager (app/risk_management.py + trading/risk_manager.py) - Kontrola ryzyka</text>
+  <text x="70" y="1140" class="dependency-label">• BotManager (app/bot_manager.py) - Zarządzanie botami handlowymi</text>
+  <text x="70" y="1155" class="dependency-label">• MainWindow (ui/main_window.py) - Główny interfejs użytkownika</text>
+</svg>
