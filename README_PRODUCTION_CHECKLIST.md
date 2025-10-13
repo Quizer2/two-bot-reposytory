@@ -13,7 +13,7 @@
 - [x] Live/simulated exchange adapters with ccxt integration
 - [x] Risk alerts/escalations publikowane na EventBus
 - [x] Release checklist automation (`ops/release_checklist.py`)
-- [x] Distribution readiness verifier (`tools/check_distribution_readiness.py`)
+- [x] Distribution readiness verifier (`tools/check_distribution_readiness.py` z kontrolą znaczników konfliktów)
 - [x] UI bundle builder (`tools/build_ui_bundle.py`)
 
 Recommended before flipping full LIVE:

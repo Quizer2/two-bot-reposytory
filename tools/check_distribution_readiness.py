@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
+import re
+import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -208,12 +210,58 @@ def _check_risk_limits(risk_limits: Dict[str, Any]) -> CheckResult:
     )
 
 
+def _list_tracked_files() -> List[Path]:
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+    return [Path(line) for line in completed.stdout.splitlines() if line.strip()]
+
+
+CONFLICT_REGEX = re.compile(r"^(<<<<<<<(?: .+)?|=======|>>>>>>>(?: .+)?)$", re.MULTILINE)
+
+
+def _check_conflict_markers(tracked_files: List[Path] | None = None) -> CheckResult:
+    tracked = tracked_files if tracked_files is not None else _list_tracked_files()
+    conflicted: List[str] = []
+    for path in tracked:
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if CONFLICT_REGEX.search(content):
+            conflicted.append(str(path))
+
+    if conflicted:
+        return CheckResult(
+            name="conflict_markers",
+            status="error",
+            message="Wykryto znaczniki konfliktów Gita – usuń je przed wydaniem.",
+            details={"files": conflicted},
+        )
+
+    return CheckResult(
+        name="conflict_markers",
+        status="ok",
+        message="Brak znaczników konfliktów w śledzonych plikach.",
+        details={},
+    )
+
+
 def run_checks() -> List[CheckResult]:
     app_config = _load_json(APP_CONFIG_FILE, default={})
     credentials = _load_json(CREDENTIALS_FILE, default={})
     risk_limits = _load_json(RISK_LIMITS_FILE, default={})
 
     return [
+        _check_conflict_markers(),
         _check_trading_mode(app_config, credentials),
         _check_risk_limits(risk_limits),
     ]
