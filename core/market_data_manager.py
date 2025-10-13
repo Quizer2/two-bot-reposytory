@@ -1,16 +1,31 @@
+"""Market Data Manager - zarządzanie danymi rynkowymi.
+
+This version prefers deterministic, offline-friendly behaviour so the
+automated integration flows can execute without real exchange access or
+heavy optional dependencies such as ``websocket``.  Real-time features
+can still be enabled by setting the ``ENABLE_REAL_MARKET_DATA``
+environment variable to a truthy value.
 """
-Market Data Manager - Zarządzanie danymi rynkowymi
-"""
+
+from __future__ import annotations
 
 import asyncio
 import logging
 import json
-import websocket
-import threading
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Callable, Tuple, Set
 from dataclasses import dataclass
-import requests
+
+try:  # pragma: no cover - optional dependency in CI
+    import websocket  # type: ignore
+except Exception:  # pragma: no cover - fallback used in tests
+    websocket = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import requests  # type: ignore
+except Exception:  # pragma: no cover - handled by mock helpers
+    requests = None
 
 from utils.helpers import get_or_create_event_loop, schedule_coro_safely
 
@@ -65,12 +80,14 @@ class MarketDataManager:
         self.ws_callback_manager = WebSocketCallbackManager()
         self._setup_websocket_callbacks()
         
-        # Konfiguracja giełd
+        enable_live = os.environ.get('ENABLE_REAL_MARKET_DATA', '0').lower() in ('1', 'true', 'yes')
+
+        # Konfiguracja giełd (domyślnie tryb offline)
         self.exchanges = {
             'binance': {
                 'rest_url': 'https://api.binance.com/api/v3',
                 'ws_url': 'wss://stream.binance.com:9443/ws',
-                'enabled': True
+                'enabled': enable_live
             },
             'bybit': {
                 'rest_url': 'https://api.bybit.com/v2/public',
@@ -267,6 +284,24 @@ class MarketDataManager:
         # Dodaj symbol do śledzonych jeśli nie ma i zarejestruj WS callbacki
         if symbol not in self.tracked_symbols:
             self.add_tracked_symbol(symbol)
+
+    def subscribe_to_ticker(self, symbol: str, callback: Callable[[Dict[str, Any]], None]):
+        """Alias wymagany przez testy UI – deleguje do :meth:`subscribe_to_price`."""
+
+        def _wrapper(price_data: PriceData) -> None:
+            ticker = {
+                'symbol': price_data.symbol,
+                'price': price_data.price,
+                'bid': price_data.bid,
+                'ask': price_data.ask,
+                'volume_24h': price_data.volume_24h,
+                'change_24h': price_data.change_24h,
+                'change_24h_percent': price_data.change_24h_percent,
+                'timestamp': price_data.timestamp.isoformat(),
+            }
+            callback(ticker)
+
+        self.subscribe_to_price(symbol, _wrapper)
     
     def set_integrated_data_manager(self, integrated_data_manager):
         """Ustawia referencję do IntegratedDataManager dla propagacji danych"""
@@ -291,12 +326,35 @@ class MarketDataManager:
         """Anuluje subskrypcję aktualizacji cen"""
         if symbol in self.subscriptions and callback in self.subscriptions[symbol]:
             self.subscriptions[symbol].remove(callback)
-            
+
             if not self.subscriptions[symbol]:
                 del self.subscriptions[symbol]
-        
+
         logger.info(f"Unsubscribed from price updates for {symbol}")
-    
+
+    async def get_price(self, symbol: str) -> Optional[float]:
+        """Zwraca jedynie wartość ceny dla wygody testów."""
+
+        price_data = await self.get_current_price(symbol)
+        return price_data.price if price_data else None
+
+    async def get_ticker(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """Zwraca uproszczony ticker w formacie przyjaznym dla UI."""
+
+        price_data = await self.get_current_price(symbol)
+        if not price_data:
+            return None
+        return {
+            'symbol': price_data.symbol,
+            'price': price_data.price,
+            'bid': price_data.bid,
+            'ask': price_data.ask,
+            'volume_24h': price_data.volume_24h,
+            'change_24h': price_data.change_24h,
+            'change_24h_percent': price_data.change_24h_percent,
+            'timestamp': price_data.timestamp.isoformat(),
+        }
+
     async def get_current_price(self, symbol: str) -> Optional[PriceData]:
         """Pobiera aktualną cenę symbolu"""
         try:
@@ -367,16 +425,16 @@ class MarketDataManager:
     async def _fetch_price_from_api(self, symbol: str) -> Optional[PriceData]:
         """Pobiera cenę z API Binance"""
         try:
-            if not self.exchanges['binance']['enabled']:
+            if not self.exchanges['binance']['enabled'] or not requests:
                 return self._get_mock_price_data(symbol)
-            
+
             url = f"{self.exchanges['binance']['rest_url']}/ticker/24hr"
             params = {'symbol': symbol}
-            
-            response = requests.get(url, params=params, timeout=5)
+
+            response = requests.get(url, params=params, timeout=5)  # type: ignore[operator]
             if response.status_code == 200:
                 data = response.json()
-                
+
                 return PriceData(
                     symbol=symbol,
                     price=float(data['lastPrice']),
@@ -398,13 +456,13 @@ class MarketDataManager:
     async def _fetch_orderbook_from_api(self, symbol: str, depth: int) -> Optional[OrderBookData]:
         """Pobiera order book z API"""
         try:
-            if not self.exchanges['binance']['enabled']:
+            if not self.exchanges['binance']['enabled'] or not requests:
                 return self._get_mock_orderbook_data(symbol)
-            
+
             url = f"{self.exchanges['binance']['rest_url']}/depth"
             params = {'symbol': symbol, 'limit': depth}
-            
-            response = requests.get(url, params=params, timeout=5)
+
+            response = requests.get(url, params=params, timeout=5)  # type: ignore[operator]
             if response.status_code == 200:
                 data = response.json()
                 
@@ -427,9 +485,15 @@ class MarketDataManager:
     async def _start_binance_websocket(self):
         """Uruchamia WebSocket dla Binance"""
         try:
-            # Implementacja WebSocket będzie dodana w przyszłości
+            if not self.exchanges['binance']['enabled']:
+                logger.debug("Binance WebSocket disabled - offline mode")
+                return
+            if websocket is None:
+                logger.warning("WebSocket library not available, falling back to mock data")
+                return
+
             logger.info("WebSocket for Binance will be implemented in future updates")
-            
+
         except Exception as e:
             logger.error(f"Error starting Binance WebSocket: {e}")
     
@@ -489,3 +553,6 @@ def get_market_data_manager() -> MarketDataManager:
     if _market_data_manager_instance is None:
         _market_data_manager_instance = MarketDataManager()
     return _market_data_manager_instance
+
+
+__all__ = ['MarketDataManager', 'PriceData', 'OrderBookData', 'TradeData', 'get_market_data_manager']

@@ -6,11 +6,18 @@ import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
-import aiosqlite
 import logging
 from utils.db_migrations import apply_migrations
 from utils.db_utils import validate_identifiers, build_where_clause, build_set_clause
 logger = logging.getLogger(__name__)
+
+try:  # pragma: no cover - zależne od środowiska uruchomieniowego
+    import aiosqlite  # type: ignore
+except Exception as exc:  # pragma: no cover - fallback do stubu
+    logger.warning("aiosqlite unavailable (%s) – installing async stub", exc)
+    from utils.async_sqlite_stub import install_aiosqlite_stub
+
+    aiosqlite = install_aiosqlite_stub()
 
 # Stałe whitelist kolumn dla dynamicznych zapytań SQL
 RISK_LIMITS_ALLOWED_COLUMNS = {

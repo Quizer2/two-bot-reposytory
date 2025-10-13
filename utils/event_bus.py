@@ -48,22 +48,26 @@ class EventBus:
                 except ValueError:
                     logger.warning(f"Nie znaleziono listenera dla {event_type}")
     
-    def publish(self, event_type: str, data: Any = None) -> None:
+    def publish(self, event_type: str, data: Any = None, **kwargs) -> None:
         """
         Publikuje zdarzenie
-        
+
         Args:
             event_type: Typ zdarzenia
             data: Dane do przekazania listenerom
         """
+        payload = data
+        if payload is None and kwargs:
+            payload = kwargs
+
         with self._lock:
             listeners = self._listeners.get(event_type, []).copy()
-        
-        logger.debug(f"Publikowanie zdarzenia {event_type} z danymi: {data}")
-        
+
+        logger.debug(f"Publikowanie zdarzenia {event_type} z danymi: {payload}")
+
         for callback in listeners:
             try:
-                callback(data)
+                callback(payload)
             except Exception as e:
                 logger.error(f"Błąd w callback dla {event_type}: {e}")
     
@@ -127,21 +131,26 @@ def unsubscribe(event_type: str, callback: Callable[[Any], None]) -> None:
     """Usuwa subskrypcję w globalnym EventBus"""
     get_event_bus().unsubscribe(event_type, callback)
 
-def publish(event_type: str, data: Any = None) -> None:
+def publish(event_type: str, data: Any = None, **kwargs) -> None:
     """Publikuje zdarzenie w globalnym EventBus"""
-    get_event_bus().publish(event_type, data)
+    get_event_bus().publish(event_type, data, **kwargs)
 
 # Stałe dla typów zdarzeń
 class EventTypes:
     """Stałe typów zdarzeń"""
     CONFIG_UPDATED = "config.updated"
-    RISK_RELOADED = "risk.reloaded" 
+    CONFIG_APP_UPDATED = "config.app.updated"
+    CONFIG_UI_UPDATED = "config.ui.updated"
+    CONFIG_RISK_UPDATED = "config.risk.updated"
+    RISK_RELOADED = "risk.reloaded"
     ORDER_SUBMITTED = "order.submitted"
     ORDER_CANCELLED = "order.cancelled"
     BOT_STARTED = "bot.started"
     BOT_STOPPED = "bot.stopped"
     BOT_UPDATED = "bot.updated"
     DATA_UPDATED = "data.updated"
+    RATE_LIMIT_WARNING = "rate.limit.warning"
+    RATE_LIMIT_BLOCKED = "rate.limit.blocked"
 
 from typing import Union
 try:
@@ -183,7 +192,12 @@ if hasattr(get_event_bus(), "publish"):
     def _wrapped_publish(event_name, payload=None, *args, **kwargs):
         if _audit_log_event is not None:
             try:
-                _audit_log_event(str(event_name), payload if isinstance(payload, dict) else {"data": str(payload)})
+                audit_payload = payload
+                if audit_payload is None and kwargs:
+                    audit_payload = kwargs
+                if not isinstance(audit_payload, dict):
+                    audit_payload = {"data": str(audit_payload)}
+                _audit_log_event(str(event_name), audit_payload)
             except Exception:
                 pass
         return _orig_publish(event_name, payload, *args, **kwargs)

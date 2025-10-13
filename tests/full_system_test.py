@@ -13,6 +13,11 @@ from types import SimpleNamespace
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, BASE)
 
+from utils.pyqt_stubs import install_pyqt_stubs
+
+# Ensure PyQt stub modules są dostępne nawet przy braku bibliotek systemowych
+install_pyqt_stubs()
+
 REPORT = {"steps": [], "summary": {}}
 def step(name, ok, details=None):
     REPORT["steps"].append({"name": name, "ok": bool(ok), "details": details})

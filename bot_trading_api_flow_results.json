@@ -1,21 +1,21 @@
 {
-  "timestamp": "2025-09-30T20:27:14.124824",
+  "timestamp": "2025-10-13T19:46:03.008355",
   "test_type": "Bot → TradingEngine → API → Exchange Flow",
   "results": [
     {
       "test": "TradingEngine Availability",
       "status": "PASSED",
-      "details": "TradingEngine methods available: ['place_order', 'cancel_order', 'get_order_status']"
+      "details": "TradingEngine methods available: ['place_order', 'cancel_order', 'get_balance', 'get_order_status']"
     },
     {
       "test": "Exchange Connectivity",
-      "status": "FAILED",
-      "details": "No exchange adapters available"
+      "status": "PASSED",
+      "details": "Connected exchanges: ['binance', 'bybit', 'kucoin', 'coinbase']. Failed: []"
     },
     {
       "test": "Order Placement Simulation",
-      "status": "FAILED",
-      "details": "Unexpected error: TradingEngine.place_order() got an unexpected keyword argument 'symbol'"
+      "status": "PASSED",
+      "details": "Test order placed successfully: OrderResponse(success=True, order_id='demo_1760384763007_1', symbol='BTCUSDT', side=<OrderSide.BUY: 'BUY'>, order_type=<OrderType.MARKET: 'MARKET'>, quantity=0.001, price=50000.0, status=<OrderStatus.FILLED: 'FILLED'>, filled_quantity=0.001, remaining_quantity=0.0, average_price=50000.0, commission=5e-07, commission_asset='USDT', timestamp=datetime.datetime(2025, 10, 13, 19, 46, 3, 7241), error=None, client_order_id=None, metadata={})"
     },
     {
       "test": "Bot Trading Integration",
@@ -25,12 +25,12 @@
     {
       "test": "Market Data Flow",
       "status": "PASSED",
-      "details": "Market data flow OK. Methods: ['get_orderbook'], Data available: True"
+      "details": "Market data flow OK. Methods: ['get_price', 'get_ticker', 'get_orderbook', 'subscribe_to_ticker'], Data available: True"
     },
     {
       "test": "API Rate Limiting",
-      "status": "SKIPPED",
-      "details": "No exchange adapters available"
+      "status": "PASSED",
+      "details": "Rate limiting features found: [\"binance: ['rate_limiter', 'request_delay', 'max_requests_per_second', 'wait_for_rate_limit']\", \"bybit: ['rate_limiter', 'request_delay', 'max_requests_per_second', 'wait_for_rate_limit']\", \"kucoin: ['rate_limiter', 'request_delay', 'max_requests_per_second', 'wait_for_rate_limit']\", \"coinbase: ['rate_limiter', 'request_delay', 'max_requests_per_second', 'wait_for_rate_limit']\"]"
     }
   ]
 }

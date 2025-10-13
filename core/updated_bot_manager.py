@@ -11,9 +11,10 @@ from enum import Enum
 
 from .integrated_data_manager import get_integrated_data_manager, IntegratedDataManager
 from .unified_data_manager import get_unified_data_manager, UnifiedDataManager
-from .trading_engine import OrderRequest, OrderSide, OrderType
+from .trading_engine import OrderRequest, OrderSide, OrderType, TradingEngine
 from .market_data_manager import PriceData
 from utils.event_bus import get_event_bus, EventTypes
+from utils.config_manager import get_config_manager
 from utils.helpers import get_or_create_event_loop, schedule_coro_safely
 
 logger = logging.getLogger(__name__)
@@ -302,19 +303,45 @@ class ScalpingStrategy(BaseBot):
 
 class UpdatedBotManager:
     """Zaktualizowany Manager Botów z integracją z UnifiedDataManager"""
-    
-    def __init__(self, risk_manager=None, data_manager=None, db_manager=None, notification_manager=None):
+
+    def __init__(
+        self,
+        risk_manager=None,
+        data_manager=None,
+        db_manager=None,
+        notification_manager=None,
+        *,
+        config_manager=None,
+        trading_engine: Optional[TradingEngine] = None,
+        market_data_manager=None,
+    ):
+        # Konfiguracja aplikacji (fallback do globalnego ConfigManagera)
+        self.config_manager = config_manager or get_config_manager()
+
         # Główny UnifiedDataManager
         self.unified_data_manager = get_unified_data_manager()
-        
+
         # Kompatybilność - IntegratedDataManager jako wrapper
-        self.data_manager = data_manager or get_integrated_data_manager()
-        
-        # Jawne przekazywanie managerów (zgodnie z zadaniem 2.2)
-        self.risk_manager = risk_manager
-        self.db_manager = db_manager  
+        self.data_manager: IntegratedDataManager = data_manager or get_integrated_data_manager()
+        if hasattr(self.data_manager, "config_manager"):
+            self.data_manager.config_manager = self.config_manager
+
+        # Jawne przekazywanie managerów z zachowaniem kompatybilności
+        self.trading_engine: Optional[TradingEngine] = trading_engine or getattr(self.data_manager, "trading_engine", None)
+        if self.trading_engine and hasattr(self.data_manager, "trading_engine"):
+            self.data_manager.trading_engine = self.trading_engine
+
+        self.market_data_manager = market_data_manager or getattr(self.data_manager, "market_data_manager", None)
+        if self.market_data_manager and hasattr(self.data_manager, "market_data_manager"):
+            self.data_manager.market_data_manager = self.market_data_manager
+
+        self.risk_manager = risk_manager or getattr(self.data_manager, "risk_manager", None)
+        if self.risk_manager is None and self.unified_data_manager and hasattr(self.unified_data_manager, "risk_manager"):
+            self.risk_manager = getattr(self.unified_data_manager, "risk_manager")
+
+        self.db_manager = db_manager or getattr(self.data_manager, "database_manager", None)
         self.notification_manager = notification_manager
-        
+
         # Boty i konfiguracje
         self.active_bots: Dict[str, BaseBot] = {}
         self.bot_configs: Dict[str, BotConfig] = {}
@@ -582,12 +609,25 @@ class UpdatedBotManager:
         """Callback na zmianę konfiguracji"""
         try:
             logger.info(f"BotManager received config update: {event_data}")
-            
+
             # Sprawdź czy zmiana dotyczy botów
             if 'bot' in str(event_data).lower() or 'strategy' in str(event_data).lower():
                 logger.info("Config change affects bots - reloading bot configurations")
                 # Tutaj można dodać logikę przeładowania konfiguracji botów
-                
+
+            # Aktualizacja limiterów TradingEngine
+            if (
+                isinstance(event_data, dict)
+                and event_data.get('config_type') == 'app'
+                and self.trading_engine
+                and hasattr(self.trading_engine, 'configure_rate_limits')
+            ):
+                new_config = event_data.get('new_config') or {}
+                trading_cfg = new_config.get('trading', {})
+                if 'rate_limiting' in trading_cfg:
+                    self.trading_engine.configure_rate_limits(trading_cfg['rate_limiting'])
+                    logger.info("TradingEngine rate limits reloaded from configuration event")
+
         except Exception as e:
             logger.error(f"Error handling config update in BotManager: {e}")
 

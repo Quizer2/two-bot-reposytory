@@ -5,7 +5,7 @@ Risk Management - Zaawansowany system zarządzania ryzykiem w tradingu
 import asyncio
 import json
 import threading
-from typing import Dict, Optional, Tuple, List, Any, Union
+from typing import Dict, Optional, Tuple, List, Any, Union, Callable, Coroutine
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_DOWN
 from enum import Enum
@@ -123,6 +123,7 @@ class RiskManager:
         
         # Subskrypcja na zmiany konfiguracji
         self.event_bus.subscribe(EventTypes.CONFIG_UPDATED, self._on_config_updated)
+        self.event_bus.subscribe(EventTypes.CONFIG_RISK_UPDATED, self._on_config_updated)
         
         # Synchronizacja
         self._lock = threading.RLock()
@@ -853,122 +854,231 @@ class RiskManager:
             if not self.db_manager:
                 self.logger.warning("Brak db_manager - używam domyślnych limitów")
                 return self.default_limits
-            
-            # Pobranie limitów z bazy danych
-            query = """
-                SELECT daily_loss_limit, daily_profit_limit, max_drawdown_limit,
-                       position_size_limit, max_open_positions, max_correlation,
-                       volatility_threshold, var_limit
-                FROM risk_limits 
-                WHERE bot_id = ?
-            """
-            
-            result = await self.db_manager.execute_query(query, (bot_id,))
-            
-            if result and len(result) > 0:
-                row = result[0]
-                limits = RiskLimits(
-                    daily_loss_limit=float(row[0]) if row[0] else 0.0,
-                    daily_profit_limit=float(row[1]) if row[1] else 0.0,
-                    max_drawdown_limit=float(row[2]) if row[2] else 0.0,
-                    position_size_limit=float(row[3]) if row[3] else 0.0,
-                    max_open_positions=int(row[4]) if row[4] else 0,
-                    max_correlation=float(row[5]) if row[5] else 0.8,
-                    volatility_threshold=float(row[6]) if row[6] else 10.0,
-                    var_limit=float(row[7]) if row[7] else 0.0
-                )
-                
-                # Aktualizacja cache
+
+            conn = await self.db_manager.get_connection()
+            if conn is None:
+                self.logger.warning("Brak połączenia z bazą danych - używam domyślnych limitów")
+                return self.default_limits
+
+            query = (
+                "SELECT max_daily_loss_percent, max_daily_profit_percent, max_drawdown_percent, "
+                "max_position_size_percent, stop_loss_percent, take_profit_percent, "
+                "max_correlation, var_confidence_level "
+                "FROM risk_limits WHERE bot_id = ? ORDER BY updated_at DESC LIMIT 1"
+            )
+
+            async with conn.execute(query, (bot_id,)) as cursor:
+                row = await cursor.fetchone()
+
+            if row:
+                limits = self._map_row_to_limits(row)
                 with self._lock:
                     self.limits_cache[bot_id] = limits
-                
-                self.logger.info(f"Załadowano limity z bazy danych dla bota {bot_id}")
+                self.logger.info("Załadowano limity z bazy danych dla bota %s", bot_id)
                 return limits
-            else:
-                # Brak limitów w bazie - używamy domyślnych
-                self.logger.info(f"Brak limitów w bazie dla bota {bot_id} - używam domyślnych")
-                with self._lock:
-                    self.limits_cache[bot_id] = self.default_limits
-                return self.default_limits
-                
+
+            self.logger.info("Brak limitów w bazie dla bota %s - używam domyślnych", bot_id)
+            with self._lock:
+                self.limits_cache[bot_id] = self.default_limits
+            return self.default_limits
+
         except Exception as e:
-            self.logger.error(f"Błąd podczas ładowania limitów z bazy danych: {e}")
+            self.logger.exception("Błąd podczas ładowania limitów z bazy danych: %s", e)
             return self.default_limits
     
     async def reload_limits(self, bot_id: int):
         """Przeładowanie limitów dla konkretnego bota"""
         try:
-            self.logger.info(f"Przeładowuję limity dla bota {bot_id}")
-            
-            # Usuń z cache
+            self.logger.info("Przeładowuję limity dla bota %s", bot_id)
+
             with self._lock:
-                if bot_id in self.limits_cache:
-                    del self.limits_cache[bot_id]
-            
-            # Załaduj ponownie z bazy
-            await self.load_limits_from_db(bot_id)
-            
-            # Wyślij trace log
-            logger.info(f"TRACE: risk.reloaded for bot_id={bot_id}")
-            
-            # Publikuj event przez EventBus
-            self.event_bus.publish(EventTypes.RISK_RELOADED, {
-                'bot_id': bot_id,
-                'timestamp': datetime.now().isoformat(),
-                'action': 'reload_limits'
-            })
-            
+                self.limits_cache.pop(bot_id, None)
+
+            limits = await self.load_limits_from_db(bot_id)
+
+            self.logger.info("TRACE: risk.reloaded - scope=bot bot_id=%s", bot_id)
+
+            self.event_bus.publish(
+                EventTypes.RISK_RELOADED,
+                {
+                    'bot_id': bot_id,
+                    'timestamp': datetime.now().isoformat(),
+                    'action': 'reload_limits',
+                    'limits': limits.to_dict()
+                }
+            )
+
         except Exception as e:
-            self.logger.error(f"Błąd podczas przeładowania limitów dla bota {bot_id}: {e}")
-    
+            self.logger.error("Błąd podczas przeładowania limitów dla bota %s: %s", bot_id, e)
+
     async def reload_all_limits(self):
         """Przeładowanie limitów dla wszystkich botów"""
         try:
             self.logger.info("Przeładowuję limity dla wszystkich botów")
-            
-            # Pobierz listę wszystkich botów z cache
-            bot_ids = list(self.limits_cache.keys())
-            
-            # Wyczyść cache
+
+            bot_ids = await self._get_known_bot_ids()
+
             with self._lock:
                 self.limits_cache.clear()
-            
-            # Przeładuj dla każdego bota
+
             for bot_id in bot_ids:
                 await self.load_limits_from_db(bot_id)
-            
-            # Wyślij trace log
-            logger.info(f"TRACE: risk.reloaded for all bots, count={len(bot_ids)}")
-            
-            # Publikuj event przez EventBus
-            self.event_bus.publish(EventTypes.RISK_RELOADED, {
-                'bot_ids': bot_ids,
-                'count': len(bot_ids),
-                'timestamp': datetime.now().isoformat(),
-                'action': 'reload_all_limits'
-            })
-            
+
+            self.logger.info("TRACE: risk.reloaded - scope=all count=%s", len(bot_ids))
+
+            self.event_bus.publish(
+                EventTypes.RISK_RELOADED,
+                {
+                    'bot_ids': bot_ids,
+                    'count': len(bot_ids),
+                    'timestamp': datetime.now().isoformat(),
+                    'action': 'reload_all_limits'
+                }
+            )
+
         except Exception as e:
-            self.logger.error(f"Błąd podczas przeładowania wszystkich limitów: {e}")
-    
+            self.logger.error("Błąd podczas przeładowania wszystkich limitów: %s", e)
+
     def _on_config_updated(self, event_data: dict):
         """Callback na zmianę konfiguracji"""
         try:
             logger.info(f"TRACE: config.updated received in RiskManager: {event_data}")
+
+            if not event_data:
+                return
+
+            if isinstance(event_data, dict):
+                namespace = event_data.get('namespace')
+                path = str(event_data.get('path', '')).lower()
+                meta = event_data.get('meta') or {}
+                bot_id = meta.get('bot_id')
+
+                if namespace == 'risk' or 'risk' in path:
+                    if bot_id is not None:
+                        try:
+                            bot_identifier = int(bot_id)
+                        except (TypeError, ValueError):
+                            bot_identifier = None
+                        if bot_identifier is not None:
+                            self._schedule_reload_limits(bot_identifier)
+                            return
+                    self._schedule_reload_limits()
+                    return
+
+                if 'new_config' in event_data or 'old_config' in event_data:
+                    if self._risk_section_changed(event_data.get('old_config'), event_data.get('new_config')):
+                        self._schedule_reload_limits()
+                        return
+
             text = str(event_data).lower()
             if 'risk' in text or 'limit' in text:
-                # Uruchom przeładowanie limitów asynchronicznie
-                import asyncio
-                try:
-                    loop = asyncio.get_running_loop()
-                    asyncio.create_task(self.reload_all_limits())
-                except RuntimeError:
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, self.reload_all_limits())
-                        future.result(timeout=10)
+                self._schedule_reload_limits()
+
         except Exception as e:
             self.logger.error(f"Błąd w _on_config_updated: {e}")
+
+    def _map_row_to_limits(self, row: Any) -> RiskLimits:
+        def _get_value(key: str, default: Any) -> Any:
+            try:
+                value = row[key]
+            except (KeyError, IndexError, TypeError):
+                return default
+            return default if value is None else value
+
+        return RiskLimits(
+            daily_loss_limit=float(_get_value('max_daily_loss_percent', self.default_limits.daily_loss_limit)),
+            daily_profit_limit=float(_get_value('max_daily_profit_percent', self.default_limits.daily_profit_limit)),
+            max_drawdown_limit=float(_get_value('max_drawdown_percent', self.default_limits.max_drawdown_limit)),
+            position_size_limit=float(_get_value('max_position_size_percent', self.default_limits.position_size_limit)),
+            max_open_positions=int(_get_value('max_open_positions', self.default_limits.max_open_positions)),
+            max_correlation=float(_get_value('max_correlation', self.default_limits.max_correlation)),
+            volatility_threshold=float(_get_value('volatility_threshold', self.default_limits.volatility_threshold)),
+            var_limit=float(_get_value('var_confidence_level', self.default_limits.var_limit))
+        )
+
+    async def _get_known_bot_ids(self) -> List[int]:
+        bot_ids: List[int] = []
+        if not self.db_manager:
+            return list(self.limits_cache.keys())
+
+        try:
+            conn = await self.db_manager.get_connection()
+            if conn is None:
+                return list(self.limits_cache.keys())
+
+            async with conn.execute(
+                "SELECT DISTINCT bot_id FROM risk_limits WHERE bot_id IS NOT NULL"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                bot_ids.extend(int(row[0]) for row in rows if row and row[0] is not None)
+
+            if not bot_ids:
+                async with conn.execute("SELECT id FROM bots") as cursor:
+                    rows = await cursor.fetchall()
+                    bot_ids.extend(int(row[0]) for row in rows if row and row[0] is not None)
+
+        except Exception as exc:
+            self.logger.error("Błąd podczas pobierania identyfikatorów botów: %s", exc)
+
+        if not bot_ids:
+            bot_ids.extend(self.limits_cache.keys())
+
+        unique_ids: List[int] = []
+        seen: set[int] = set()
+        for bot_id in bot_ids:
+            if bot_id not in seen:
+                seen.add(bot_id)
+                unique_ids.append(bot_id)
+        return unique_ids
+
+    def _schedule_reload_limits(self, bot_id: Optional[int] = None) -> None:
+        if bot_id is None:
+            self._schedule_coro(lambda: self.reload_all_limits())
+        else:
+            self._schedule_coro(lambda: self.reload_limits(bot_id))
+
+    def _schedule_coro(self, coro_factory: Callable[[], Coroutine[Any, Any, Any]]) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro_factory())
+        except RuntimeError:
+            thread = threading.Thread(
+                target=self._run_coro_threadsafe,
+                args=(coro_factory,),
+                daemon=True
+            )
+            thread.start()
+
+    def _run_coro_threadsafe(self, coro_factory: Callable[[], Coroutine[Any, Any, Any]]) -> None:
+        try:
+            asyncio.run(coro_factory())
+        except Exception as exc:
+            self.logger.error("Błąd podczas uruchamiania zadania async: %s", exc)
+
+    def _risk_section_changed(self, old_config: Optional[Dict[str, Any]], new_config: Optional[Dict[str, Any]]) -> bool:
+        return self._extract_risk_section(old_config) != self._extract_risk_section(new_config)
+
+    def _extract_risk_section(self, config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(config, dict):
+            return {}
+
+        trading = config.get('trading')
+        if isinstance(trading, dict):
+            risk_section = trading.get('risk_management') or trading.get('risk')
+            if isinstance(risk_section, dict):
+                return risk_section
+
+        risk_root = config.get('risk_management')
+        if isinstance(risk_root, dict):
+            return risk_root
+
+        return {}
+
+
+_risk_manager_lock = threading.RLock()
+_risk_manager: Optional[RiskManager] = None
+
+
 def get_risk_manager(db_manager=None):
     """Pobieranie instancji RiskManager (singleton)"""
     global _risk_manager
