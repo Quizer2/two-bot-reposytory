@@ -128,32 +128,6 @@ class ConfigManager:
                     "ETH/GBP",
                     "ADA/EUR"
                 ]
-            },
-            "notifications": {
-                "enabled": True,
-                "sound": True,
-                "desktop": True,
-                "types": {
-                    "trades": True,
-                    "profit": True,
-                    "errors": True,
-                    "api": False
-                },
-                "channels": {
-                    "email": {
-                        "enabled": False,
-                        "address": ""
-                    },
-                    "telegram": {
-                        "enabled": False,
-                        "token": "",
-                        "chat_id": ""
-                    },
-                    "discord": {
-                        "enabled": False,
-                        "webhook": ""
-                    }
-                }
             }
         }
     

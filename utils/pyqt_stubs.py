@@ -380,10 +380,6 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         class PenStyle:
             NoPen = 0
 
-        class WindowType:
-            WindowStaysOnTopHint = 0x00040000
-            SplashScreen = 0x00000001
-
     class _BoundSignal:
         """Minimalna implementacja sygnału PyQt dla środowiska testowego."""
 
