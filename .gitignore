@@ -16,6 +16,7 @@ env/
 build/
 dist/
 *.egg-info/
+vendor/linux/*.so*
 
 # Databases & logs
 *.db

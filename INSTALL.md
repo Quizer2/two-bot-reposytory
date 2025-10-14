@@ -63,7 +63,12 @@ python -c "import PyQt6; print('PyQt6 OK')"
 
 2. **Edytuj konfigurację** w pliku `config\app_config.yaml`
 
-3. **Uruchom aplikację**:
+3. **Zweryfikuj środowisko (opcjonalnie, ale zalecane)**:
+   ```cmd
+   python main.py check-deps
+   ```
+
+4. **Uruchom aplikację**:
    ```cmd
    python main.py
    ```

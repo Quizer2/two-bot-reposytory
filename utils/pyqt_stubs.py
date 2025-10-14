@@ -62,12 +62,19 @@ def install_pyqt_stubs(force: bool = False) -> bool:
             self._min_size = None
             self._max_size = None
             self._size_policy = None
-            self._style = None
+            self._style = ""
             self._size = None
             self._pos = None
+            self._layout = None
+            self._children = []
+            if parent is not None and hasattr(parent, "_children"):
+                parent._children.append(self)
 
         def setObjectName(self, name):
             self._object_name = name
+
+        def objectName(self):
+            return self._object_name
 
         def setMinimumSize(self, w, h):
             self._min_size = (w, h)
@@ -79,7 +86,10 @@ def install_pyqt_stubs(force: bool = False) -> bool:
             self._size_policy = (h, v)
 
         def setStyleSheet(self, style):
-            self._style = style
+            self._style = style or ""
+
+        def styleSheet(self):
+            return self._style
 
         def resize(self, w, h):
             self._size = (w, h)
@@ -87,8 +97,48 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         def move(self, x, y):
             self._pos = (x, y)
 
+        def setLayout(self, layout):
+            self._layout = layout
+            if hasattr(layout, "_set_parent"):
+                layout._set_parent(self)
+
+        def layout(self):
+            return self._layout
+
+        def children(self):
+            return list(self._children)
+
+        def findChildren(self, cls):
+            return [child for child in self._children if isinstance(child, cls)]
+
         def screen(self):
             return SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 1920, 1080))
+
+    class QSplashScreen(QWidget):
+        def __init__(self, pixmap=None):
+            super().__init__()
+            self._pixmap = pixmap
+            self._window_flags = 0
+            self._message = ""
+            self._alignment = None
+            self._color = None
+
+        def setWindowFlags(self, flags):
+            self._window_flags = flags
+
+        def show(self):
+            return None
+
+        def showMessage(self, message, alignment=None, color=None):
+            self._message = message
+            self._alignment = alignment
+            self._color = color
+
+        def clearMessage(self):
+            self._message = ""
+
+        def finish(self, widget):
+            return None
 
     class QMainWindow(QWidget):
         def __init__(self, parent=None):
@@ -125,6 +175,31 @@ def install_pyqt_stubs(force: bool = False) -> bool:
 
         def __init__(self, args=None):
             type(self)._inst = self
+            self._application_name = ""
+            self._application_version = ""
+            self._organization_name = ""
+            self._style = "Fusion"
+            self._font = None
+            self.aboutToQuit = SimpleNamespace(connect=lambda callback: None)
+            self.lastWindowClosed = SimpleNamespace(connect=lambda callback: None)
+
+        def setApplicationName(self, name):
+            self._application_name = name
+
+        def setApplicationVersion(self, version):
+            self._application_version = version
+
+        def setOrganizationName(self, name):
+            self._organization_name = name
+
+        def setStyle(self, style):
+            self._style = style
+
+        def setFont(self, font):
+            self._font = font
+
+        def processEvents(self):
+            return None
 
         def exec(self):  # pragma: no cover - nie używane w testach
             return 0
@@ -159,11 +234,49 @@ def install_pyqt_stubs(force: bool = False) -> bool:
             pass
 
     class QLayout(QObject):
-        def addWidget(self, *args, **kwargs):
-            pass
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._items = []
+            self._margins = (0, 0, 0, 0)
+            self._spacing = 0
+            self._parent_widget = parent
+            if parent is not None and hasattr(parent, "setLayout"):
+                try:
+                    parent.setLayout(self)
+                except Exception:
+                    self._parent_widget = parent
 
-        def addItem(self, *args, **kwargs):
-            pass
+        def _set_parent(self, widget):
+            self._parent_widget = widget
+
+        def addWidget(self, widget, *args, **kwargs):
+            self._items.append(("widget", widget, args, kwargs))
+            if hasattr(widget, "_children") and self._parent_widget is not None:
+                if widget not in self._parent_widget._children:
+                    self._parent_widget._children.append(widget)
+
+        def addLayout(self, layout, *args, **kwargs):
+            self._items.append(("layout", layout, args, kwargs))
+            if hasattr(layout, "_set_parent"):
+                layout._set_parent(self._parent_widget)
+
+        def addItem(self, item, *args, **kwargs):
+            self._items.append(("item", item, args, kwargs))
+
+        def addStretch(self, *args, **kwargs):
+            self._items.append(("stretch", args, kwargs))
+
+        def setContentsMargins(self, left, top, right, bottom):
+            self._margins = (left, top, right, bottom)
+
+        def contentsMargins(self):
+            return self._margins
+
+        def setSpacing(self, spacing):
+            self._spacing = spacing
+
+        def spacing(self):
+            return self._spacing
 
     class QLayoutItem:
         def __init__(self, *args, **kwargs):
@@ -242,6 +355,7 @@ def install_pyqt_stubs(force: bool = False) -> bool:
             AlignLeft = 0
             AlignRight = 1
             AlignCenter = 2
+            AlignBottom = 3
 
         class Orientation:
             Horizontal = 1
@@ -258,8 +372,61 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         class TextElideMode:
             ElideNone = 0
 
+        class GlobalColor:
+            white = "#ffffff"
+            darkBlue = "#00008b"
+            transparent = 0
+
+        class PenStyle:
+            NoPen = 0
+
+        class WindowType:
+            WindowStaysOnTopHint = 0x00040000
+            SplashScreen = 0x00000001
+
+    class _BoundSignal:
+        """Minimalna implementacja sygnału PyQt dla środowiska testowego."""
+
+        def __init__(self):
+            self._slots = []
+
+        def connect(self, slot):  # pragma: no cover - prosta implementacja
+            if callable(slot) and slot not in self._slots:
+                self._slots.append(slot)
+            return slot
+
+        def emit(self, *args, **kwargs):  # pragma: no cover - prosta implementacja
+            for slot in list(self._slots):
+                slot(*args, **kwargs)
+
+        def disconnect(self, slot=None):  # pragma: no cover - prosta implementacja
+            if slot is None:
+                self._slots.clear()
+            else:
+                self._slots = [s for s in self._slots if s != slot]
+
+    class _SignalDescriptor:
+        def __init__(self):
+            self._name = None
+
+        def __set_name__(self, owner, name):
+            self._name = name
+
+        def __get__(self, instance, owner):
+            if instance is None:
+                return self
+            if self._name is None:
+                raise AttributeError("Signal descriptor is missing a name")
+            signals = instance.__dict__.setdefault("__qt_signals__", {})
+            if self._name not in signals:
+                signals[self._name] = _BoundSignal()
+            return signals[self._name]
+
+        def __call__(self, *args, **kwargs):
+            return self
+
     def pyqtSignal(*args, **kwargs):
-        return SimpleNamespace(connect=lambda *a, **kw: None, emit=lambda *a, **kw: None)
+        return _SignalDescriptor()
 
     def pyqtSlot(*decorator_args, **decorator_kwargs):
         def decorator(fn):
@@ -360,10 +527,49 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         pass
 
     class QLabel(QWidget):
-        pass
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = str(text)
+            self._alignment = None
+            self._word_wrap = False
+
+        def setText(self, text):
+            self._text = str(text)
+
+        def text(self):
+            return self._text
+
+        def setAlignment(self, alignment):
+            self._alignment = alignment
+
+        def alignment(self):
+            return self._alignment
+
+        def setWordWrap(self, enabled):
+            self._word_wrap = bool(enabled)
+
+        def wordWrap(self):
+            return self._word_wrap
 
     class QPushButton(QWidget):
-        pass
+        clicked = pyqtSignal()
+
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self._text = str(text)
+            self._tooltip = ""
+
+        def setText(self, text):
+            self._text = str(text)
+
+        def text(self):
+            return self._text
+
+        def setToolTip(self, tooltip):
+            self._tooltip = tooltip or ""
+
+        def toolTip(self):
+            return self._tooltip
 
     class QListWidget(QWidget):
         pass
@@ -412,23 +618,32 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         pass
 
     class QGridLayout(QLayout):
-        def addWidget(self, *args, **kwargs):
-            pass
+        def addWidget(self, widget, *args, **kwargs):
+            super().addWidget(widget, *args, **kwargs)
 
-        def addLayout(self, *args, **kwargs):
-            pass
+        def addLayout(self, layout, *args, **kwargs):
+            super().addLayout(layout, *args, **kwargs)
 
-        def addSpacing(self, *args, **kwargs):
-            pass
+        def addSpacing(self, value):
+            self._items.append(("spacing", value))
 
-        def addStretch(self, *args, **kwargs):
-            pass
+        def addStretch(self, stretch=0):
+            super().addStretch(stretch)
 
-        def setContentsMargins(self, *args, **kwargs):
-            pass
+        def setContentsMargins(self, left, top, right, bottom):
+            self._margins = (left, top, right, bottom)
+
+        def contentsMargins(self):
+            return self._margins
+
+        def setSpacing(self, spacing):
+            self._spacing = spacing
+
+        def spacing(self):
+            return self._spacing
 
         def setAlignment(self, *args, **kwargs):
-            pass
+            self._items.append(("alignment", args, kwargs))
 
     class QVBoxLayout(QGridLayout):
         pass
@@ -581,8 +796,19 @@ def install_pyqt_stubs(force: bool = False) -> bool:
             self.colors[role] = color
 
     class QPixmap:
-        def __init__(self, *args, **kwargs):
-            self.source = args[0] if args else None
+        def __init__(self, width=0, height=0):
+            self._width = int(width)
+            self._height = int(height)
+            self._fill = None
+
+        def fill(self, color):
+            self._fill = color
+
+        def width(self):
+            return self._width
+
+        def height(self):
+            return self._height
 
     class QSyntaxHighlighter:
         def __init__(self, *args, **kwargs):
@@ -595,17 +821,48 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         pass
 
     class QPainter:
-        pass
+        Antialiasing = 1
+
+        def __init__(self, target=None):
+            self._target = target
+            self._pen = None
+            self._brush = None
+
+        def setRenderHint(self, *args, **kwargs):
+            pass
+
+        def setBrush(self, brush):
+            self._brush = brush
+
+        def setPen(self, pen):
+            self._pen = pen
+
+        def drawRoundedRect(self, *args, **kwargs):
+            pass
+
+        def drawText(self, *args, **kwargs):
+            pass
+
+        def fillRect(self, *args, **kwargs):
+            pass
+
+        def end(self):
+            pass
 
     class QPen:
-        pass
+        def __init__(self, color=None):
+            self.color = color
 
     class QContextMenuEvent:
         pass
 
     class QLinearGradient:
         def __init__(self, *args, **kwargs):
-            pass
+            self.points = args
+            self.colors = []
+
+        def setColorAt(self, position, color):
+            self.colors.append((position, color))
 
     qtcore.QObject = QObject
     qtcore.QTimer = QTimer
@@ -652,6 +909,7 @@ def install_pyqt_stubs(force: bool = False) -> bool:
     qtwidgets.QGroupBox = QGroupBox
     qtwidgets.QDialog = QDialog
     qtwidgets.QMessageBox = QMessageBox
+    qtwidgets.QSplashScreen = QSplashScreen
     qtwidgets.QTreeWidget = QTreeWidget
     qtwidgets.QTreeWidgetItem = QTreeWidgetItem
     qtwidgets.QFileDialog = QFileDialog

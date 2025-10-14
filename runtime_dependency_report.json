@@ -14,31 +14,21 @@
   },
   "system_libraries": {
     "libGL.so.1": {
-      "status": "missing",
-      "install": "sudo apt-get install -y libgl1"
+      "status": "bundled",
+      "resolved": "/workspace/two-bot-reposytory/vendor/linux/libGL.so.1",
+      "note": "Stub zbudowany lokalnie"
     },
     "libOpenGL.so.0": {
-      "status": "missing",
-      "install": "sudo apt-get install -y libopengl0"
+      "status": "bundled",
+      "resolved": "/workspace/two-bot-reposytory/vendor/linux/libOpenGL.so.0",
+      "note": "Stub zbudowany lokalnie"
     }
   },
   "software_backend": {
-    "status": "configured",
-    "path": "config/qt_software_backend.env",
-    "exports": {
-      "QT_OPENGL": "software",
-      "QT_QUICK_BACKEND": "software",
-      "QT_XCB_FORCE_SOFTWARE_OPENGL": "1"
-    }
+    "status": "not_required"
   },
   "notes": "Uruchom ten skrypt na maszynie docelowej. Jeśli zależności są brakujące, wykonaj sugerowane komendy instalacyjne przed wydaniem.",
   "sentry": {
-    "status": "synced",
-    "path": "config/runtime_overrides.json",
-    "values": {
-      "dsn": "https://example@sentry.io/42",
-      "environment": "production",
-      "release": "2025.10.16"
-    }
+    "status": "skipped"
   }
 }

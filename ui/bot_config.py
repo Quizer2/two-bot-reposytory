@@ -133,6 +133,7 @@ class BotConfigWidget(QWidget):
             self.config_manager = None
             self.logger = None
 
+        self.available_pairs = self._load_supported_pairs()
         self.strategy_definitions = self.get_strategy_definitions()
 
         # Przechowywanie stanu botów
@@ -393,28 +394,39 @@ class BotConfigWidget(QWidget):
             # Sprawdź czy formularz istnieje
             if not hasattr(self, 'form_widget') or not self.form_widget:
                 return None
-            
+
             # Pobierz dane z pól formularza
+            type_widget = getattr(self, 'type_combo', QComboBox())
+            selected_type = None
+            if hasattr(type_widget, 'currentData'):
+                selected_type = type_widget.currentData()
+            pair_widget = getattr(self, 'pair_combo', QComboBox())
+            selected_pair = pair_widget.currentText() if hasattr(pair_widget, 'currentText') else ""
+
             bot_data = {
                 'name': getattr(self, 'name_input', QLineEdit()).text() or f"Bot_{len(self.bots_data) + 1}",
-                'type': getattr(self, 'type_combo', QComboBox()).currentText() or "DCA",
-                'pair': getattr(self, 'pair_combo', QComboBox()).currentText() or "BTC/USDT",
+                'type': (selected_type or getattr(type_widget, 'currentText', lambda: "DCA")() or "DCA"),
+                'pair': selected_pair or "BTC/USDT",
                 'status': 'stopped',
                 'id': len(self.bots_data) + 1,
                 'pnl': 0.0,
                 'created_at': datetime.now().isoformat()
             }
-            
+
             # Dodaj dodatkowe parametry w zależności od typu bota
             if hasattr(self, 'amount_input'):
-                try:
-                    bot_data['amount'] = float(self.amount_input.text() or "100")
-                except ValueError:
-                    bot_data['amount'] = 100.0
-            
+                amount_widget = getattr(self, 'amount_input')
+                if isinstance(amount_widget, QDoubleSpinBox):
+                    bot_data['amount'] = float(amount_widget.value())
+                else:
+                    try:
+                        bot_data['amount'] = float(amount_widget.text() or "100")
+                    except ValueError:
+                        bot_data['amount'] = 100.0
+
             if hasattr(self, 'interval_combo'):
                 bot_data['interval'] = self.interval_combo.currentText() or "1h"
-            
+
             return bot_data
             
         except Exception as e:
@@ -634,6 +646,24 @@ class BotConfigWidget(QWidget):
         return section
 
 
+    def _load_supported_pairs(self) -> List[str]:
+        """Ładuje listę wspieranych par handlowych z konfiguracji."""
+
+        fallback_pairs = ["BTC/USDT", "ETH/USDT", "BTC/EUR", "ETH/EUR"]
+        try:
+            if self.config_manager is None:
+                return fallback_pairs
+
+            pairs = self.config_manager.get_supported_trading_pairs()
+            if pairs:
+                return pairs
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning(f"Nie udało się pobrać listy par handlowych: {exc}")
+
+        return fallback_pairs
+
+
     def get_strategy_definitions(self) -> Dict[str, Dict[str, Any]]:
         """Zwraca definicje dostępnych strategii oraz ich pola konfiguracyjne."""
         return {
@@ -766,6 +796,268 @@ class BotConfigWidget(QWidget):
                     },
                 ],
             },
+            "swing": {
+                "label": "Swing",
+                "description": "Strategia swing trading z analizą trendu i zarządzaniem pozycją.",
+                "fields": [
+                    {
+                        "name": "timeframe",
+                        "label": "Interwał analizy",
+                        "type": "select",
+                        "options": ["1h", "4h", "1d"],
+                        "default": "4h",
+                    },
+                    {
+                        "name": "amount",
+                        "label": "Kwota pozycji (USDT)",
+                        "type": "float",
+                        "min": 10.0,
+                        "max": 100000.0,
+                        "decimals": 2,
+                        "step": 10.0,
+                        "default": 500.0,
+                    },
+                    {
+                        "name": "take_profit_ratio",
+                        "label": "Take profit (RR)",
+                        "type": "float",
+                        "min": 0.5,
+                        "max": 10.0,
+                        "decimals": 2,
+                        "step": 0.1,
+                        "default": 2.0,
+                    },
+                    {
+                        "name": "stop_loss_percentage",
+                        "label": "Stop loss (%)",
+                        "type": "float",
+                        "min": 0.1,
+                        "max": 20.0,
+                        "decimals": 2,
+                        "step": 0.1,
+                        "default": 1.5,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "short_window",
+                        "label": "Krótkie okno średniej",
+                        "type": "int",
+                        "min": 3,
+                        "max": 50,
+                        "default": 5,
+                    },
+                    {
+                        "name": "long_window",
+                        "label": "Długie okno średniej",
+                        "type": "int",
+                        "min": 6,
+                        "max": 200,
+                        "default": 20,
+                    },
+                ],
+            },
+            "momentum": {
+                "label": "Momentum",
+                "description": "Wykorzystuje różnicę pomiędzy szybką i wolną średnią kroczącą do łapania trendów.",
+                "fields": [
+                    {
+                        "name": "short_window",
+                        "label": "Szybka średnia (świece)",
+                        "type": "int",
+                        "min": 3,
+                        "max": 120,
+                        "default": 8,
+                    },
+                    {
+                        "name": "long_window",
+                        "label": "Wolna średnia (świece)",
+                        "type": "int",
+                        "min": 6,
+                        "max": 360,
+                        "default": 21,
+                    },
+                    {
+                        "name": "momentum_threshold",
+                        "label": "Próg momentum (%)",
+                        "type": "float",
+                        "min": 0.05,
+                        "max": 5.0,
+                        "decimals": 2,
+                        "step": 0.05,
+                        "default": 0.25,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "trade_amount",
+                        "label": "Kwota transakcji (USDT)",
+                        "type": "float",
+                        "min": 10.0,
+                        "max": 100000.0,
+                        "decimals": 2,
+                        "step": 10.0,
+                        "default": 250.0,
+                    },
+                    {
+                        "name": "cooldown_seconds",
+                        "label": "Minimalny czas między transakcjami (s)",
+                        "type": "int",
+                        "min": 10,
+                        "max": 3600,
+                        "step": 5,
+                        "default": 60,
+                    },
+                ],
+            },
+            "mean_reversion": {
+                "label": "Mean Reversion",
+                "description": "Poluje na odchylenia od średniej i gra na powrót ceny do równowagi.",
+                "fields": [
+                    {
+                        "name": "lookback_window",
+                        "label": "Okno średniej (świece)",
+                        "type": "int",
+                        "min": 5,
+                        "max": 360,
+                        "default": 30,
+                    },
+                    {
+                        "name": "deviation_threshold",
+                        "label": "Próg odchylenia (%)",
+                        "type": "float",
+                        "min": 0.1,
+                        "max": 5.0,
+                        "decimals": 2,
+                        "step": 0.05,
+                        "default": 1.0,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "trade_amount",
+                        "label": "Kwota transakcji (USDT)",
+                        "type": "float",
+                        "min": 10.0,
+                        "max": 100000.0,
+                        "decimals": 2,
+                        "step": 10.0,
+                        "default": 300.0,
+                    },
+                    {
+                        "name": "max_position_minutes",
+                        "label": "Maks. czas pozycji (min)",
+                        "type": "int",
+                        "min": 15,
+                        "max": 1440,
+                        "step": 5,
+                        "default": 240,
+                    },
+                    {
+                        "name": "position_scaling",
+                        "label": "Skalowanie pozycji",
+                        "type": "bool",
+                        "default": False,
+                    },
+                ],
+            },
+            "breakout": {
+                "label": "Breakout",
+                "description": "Monitoruje konsolidacje i dołącza do ruchu po wybiciu z zakresu.",
+                "fields": [
+                    {
+                        "name": "lookback_window",
+                        "label": "Zakres analizy (świece)",
+                        "type": "int",
+                        "min": 10,
+                        "max": 360,
+                        "default": 40,
+                    },
+                    {
+                        "name": "breakout_buffer",
+                        "label": "Bufor wybicia (%)",
+                        "type": "float",
+                        "min": 0.1,
+                        "max": 5.0,
+                        "decimals": 2,
+                        "step": 0.05,
+                        "default": 0.3,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "trade_amount",
+                        "label": "Kwota transakcji (USDT)",
+                        "type": "float",
+                        "min": 10.0,
+                        "max": 100000.0,
+                        "decimals": 2,
+                        "step": 10.0,
+                        "default": 350.0,
+                    },
+                    {
+                        "name": "trailing_stop_percentage",
+                        "label": "Trailing stop (%)",
+                        "type": "float",
+                        "min": 0.1,
+                        "max": 10.0,
+                        "decimals": 2,
+                        "step": 0.1,
+                        "default": 0.8,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "confirmation_candles",
+                        "label": "Świece potwierdzenia",
+                        "type": "int",
+                        "min": 1,
+                        "max": 10,
+                        "step": 1,
+                        "default": 2,
+                    },
+                ],
+            },
+            "arbitrage": {
+                "label": "Arbitrage",
+                "description": "Strategia arbitrażu między giełdami z kontrolą spreadu.",
+                "fields": [
+                    {
+                        "name": "exchanges",
+                        "label": "Giełdy (lista)",
+                        "type": "text",
+                        "default": "Binance, Kraken",
+                        "placeholder": "np. Binance, Kraken, Coinbase",
+                    },
+                    {
+                        "name": "min_spread_percentage",
+                        "label": "Minimalny spread (%)",
+                        "type": "float",
+                        "min": 0.1,
+                        "max": 10.0,
+                        "decimals": 2,
+                        "step": 0.1,
+                        "default": 0.5,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "max_slippage_percentage",
+                        "label": "Maks. poślizg (%)",
+                        "type": "float",
+                        "min": 0.05,
+                        "max": 5.0,
+                        "decimals": 2,
+                        "step": 0.05,
+                        "default": 0.25,
+                        "suffix": "%",
+                    },
+                    {
+                        "name": "trade_amount",
+                        "label": "Kwota transakcji (USDT)",
+                        "type": "float",
+                        "min": 10.0,
+                        "max": 100000.0,
+                        "decimals": 2,
+                        "step": 10.0,
+                        "default": 100.0,
+                    },
+                ],
+            },
             "ai": {
                 "label": "AI",
                 "description": "Strategia AI wykorzystująca modele ML do adaptacyjnego handlu.",
@@ -890,16 +1182,19 @@ class BotConfigWidget(QWidget):
             widget.setChecked(bool(effective_value))
             return widget
 
-        if field_type == "choice":
+        if field_type in {"choice", "select"}:
             widget = QComboBox()
-            widget.addItems(field_spec.get("choices", []))
-            if effective_value in field_spec.get("choices", []):
+            choices = field_spec.get("choices") or field_spec.get("options", [])
+            widget.addItems(choices)
+            if effective_value in choices:
                 widget.setCurrentText(str(effective_value))
             widget.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
             return widget
 
         widget = QLineEdit()
         widget.setText(str(effective_value or ""))
+        if field_spec.get("placeholder"):
+            widget.setPlaceholderText(str(field_spec["placeholder"]))
         widget.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
         return widget
 
@@ -956,10 +1251,35 @@ class BotConfigWidget(QWidget):
                 params["profit_target"] = self._percentage_to_decimal(trading_values["take_profit"])
             if "stop_loss" not in params and trading_values.get("stop_loss") is not None:
                 params["stop_loss"] = self._percentage_to_decimal(trading_values["stop_loss"])
+        elif strategy_key == "swing":
+            if trading_values.get("amount") is not None and "amount" not in params:
+                params["amount"] = trading_values["amount"]
+            stop_loss_value = params.get("stop_loss_percentage")
+            if stop_loss_value is not None and stop_loss_value < 1:
+                params["stop_loss_percentage"] = stop_loss_value * 100
+        elif strategy_key == "arbitrage":
+            exchanges_value = params.get("exchanges")
+            if isinstance(exchanges_value, str):
+                params["exchanges"] = [segment.strip() for segment in exchanges_value.split(',') if segment.strip()]
+            elif exchanges_value is None:
+                params["exchanges"] = []
+            for key in ("min_spread_percentage", "max_slippage_percentage"):
+                value = params.get(key)
+                if value is not None and value < 1:
+                    params[key] = value * 100
+            if trading_values.get("amount") is not None and "trade_amount" not in params:
+                params["trade_amount"] = trading_values["amount"]
         elif strategy_key == "ai":
             params.setdefault("pair", symbol)
             if trading_values.get("amount") is not None:
                 params.setdefault("budget", trading_values["amount"])
+        elif strategy_key in {"momentum", "mean_reversion", "breakout"}:
+            if trading_values.get("amount") is not None and "trade_amount" not in params:
+                params["trade_amount"] = trading_values["amount"]
+            if strategy_key == "mean_reversion" and trading_values.get("max_position_minutes") is not None and "max_position_minutes" not in params:
+                params["max_position_minutes"] = trading_values["max_position_minutes"]
+            if strategy_key == "breakout" and trading_values.get("take_profit") is not None and "trailing_stop_percentage" not in params:
+                params["trailing_stop_percentage"] = self._percentage_to_decimal(trading_values["take_profit"])
 
         return params
 
@@ -1054,7 +1374,8 @@ class BotConfigWidget(QWidget):
         name_edit = QLineEdit(bot_data.get("name", ""))
         name_edit.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
         basic_layout.addRow("Nazwa:", name_edit)
-        
+        self.name_input = name_edit
+
         # Typ strategii
         strategy_combo = QComboBox()
         available_strategies = list(self.strategy_definitions.keys())
@@ -1072,12 +1393,30 @@ class BotConfigWidget(QWidget):
             current_strategy = available_strategies[0]
         strategy_combo.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
         basic_layout.addRow("Strategia:", strategy_combo)
+        self.type_combo = strategy_combo
 
         # Para handlowa
-        pair_edit = QLineEdit(bot_data.get("pair", ""))
-        pair_edit.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
-        basic_layout.addRow("Para:", pair_edit)
-        
+        pair_combo = QComboBox()
+        pair_combo.setEditable(True)
+        if hasattr(QComboBox, "InsertPolicy"):
+            try:
+                pair_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            except Exception:
+                pass
+        for pair in self.available_pairs:
+            pair_combo.addItem(pair)
+        current_pair = bot_data.get("pair") or bot_data.get("symbol") or ""
+        if current_pair:
+            normalised_pair = str(current_pair).strip().upper().replace("-", "/").replace(" ", "")
+            if normalised_pair not in self.available_pairs:
+                pair_combo.addItem(normalised_pair)
+            pair_combo.setCurrentText(normalised_pair)
+        elif self.available_pairs:
+            pair_combo.setCurrentIndex(0)
+        pair_combo.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
+        basic_layout.addRow("Para:", pair_combo)
+        self.pair_combo = pair_combo
+
         basic_section = self.create_collapsible_section("Podstawowe ustawienia", basic_info)
         form_layout.addWidget(basic_section)
         
@@ -1093,6 +1432,7 @@ class BotConfigWidget(QWidget):
         amount_spin.setValue(float(amount_value if amount_value is not None else 0.0))
         amount_spin.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
         trading_layout.addRow("Kwota (USDT):", amount_spin)
+        self.amount_input = amount_spin
 
         # Take Profit
         tp_spin = QDoubleSpinBox()
@@ -1146,6 +1486,7 @@ class BotConfigWidget(QWidget):
             interval_combo.setCurrentText("5m")
         interval_combo.setStyleSheet("padding: 4px; border: 1px solid #bdc3c7; border-radius: 3px;")
         advanced_layout.addRow("Interwał:", interval_combo)
+        self.interval_combo = interval_combo
         
         advanced_section = self.create_collapsible_section("Ustawienia zaawansowane", advanced_info)
         form_layout.addWidget(advanced_section)
@@ -1165,6 +1506,7 @@ class BotConfigWidget(QWidget):
         }
 
         def refresh_strategy_fields(strategy_key: Optional[str]):
+            strategy_key = (strategy_key or "").lower().strip()
             if not strategy_key:
                 return
             # Zachowaj aktualne wartości strategii zanim przełączymy widok
@@ -1217,8 +1559,11 @@ class BotConfigWidget(QWidget):
                 strategy_layout.addRow(f"{label_text}:", widget)
 
         if available_strategies:
-            refresh_strategy_fields(strategy_combo.currentData() or available_strategies[0])
-        strategy_combo.currentIndexChanged.connect(lambda _: refresh_strategy_fields(strategy_combo.currentData()))
+            initial_strategy_key = self._extract_strategy_key(strategy_combo) or available_strategies[0]
+            refresh_strategy_fields(initial_strategy_key)
+        strategy_combo.currentIndexChanged.connect(
+            lambda _: refresh_strategy_fields(self._extract_strategy_key(strategy_combo))
+        )
 
         strategy_section = self.create_collapsible_section(
             "Parametry strategii",
@@ -1230,7 +1575,7 @@ class BotConfigWidget(QWidget):
         # Przygotowanie stanu formularza do zapisu
         form_state: Dict[str, Any] = {
             "name": name_edit,
-            "pair": pair_edit,
+            "pair": pair_combo,
             "strategy_combo": strategy_combo,
             "amount": amount_spin,
             "take_profit": tp_spin,
@@ -1295,11 +1640,12 @@ class BotConfigWidget(QWidget):
             if not name_value:
                 name_value = bot_data.get("name", f"Bot_{bot_data.get('id', len(self.bots_data) + 1)}")
 
-            pair_value = pair_widget.text().strip() if isinstance(pair_widget, QLineEdit) else bot_data.get("pair", "")
+            pair_value = self._normalise_pair_value(pair_widget, bot_data.get("pair", ""))
 
-            selected_strategy_key = strategy_combo.currentData() if isinstance(strategy_combo, QComboBox) else (bot_data.get("strategy") or bot_data.get("type") or "dca")
+            selected_strategy_key = self._extract_strategy_key(strategy_combo) if isinstance(strategy_combo, QComboBox) else None
             if not selected_strategy_key:
-                selected_strategy_key = "dca"
+                selected_strategy_key = (bot_data.get("strategy") or bot_data.get("type") or "dca")
+            selected_strategy_key = str(selected_strategy_key).lower().strip() or "dca"
 
             strategy_settings = self._collect_strategy_field_values(strategy_state)
             if strategy_state is not None:
@@ -1355,6 +1701,57 @@ class BotConfigWidget(QWidget):
             QMessageBox.information(self, "Błąd", error_message)
         finally:
             self.cancel_bot_edit()
+
+    def _extract_strategy_key(self, combo: Optional['QComboBox']) -> Optional[str]:
+        """Zwraca aktualnie wybraną strategię z kontrolki combo, z fallbackiem do etykiety."""
+        if combo is None or not isinstance(combo, QComboBox):
+            return None
+
+        role = None
+        qt_item_role = getattr(Qt, "ItemDataRole", None)
+        if qt_item_role is not None:
+            role = getattr(qt_item_role, "UserRole", None)
+
+        data = None
+        try:
+            if role is not None:
+                data = combo.currentData(role)
+            else:
+                data = combo.currentData()
+        except TypeError:
+            data = combo.currentData()
+
+        if not data and hasattr(combo, "currentText"):
+            data = combo.currentText()
+
+        if data is None:
+            return None
+
+        return str(data).strip().lower() or None
+
+    def _normalise_pair_value(self, widget: Optional[Any], default: str = "") -> str:
+        """Pobiera aktualnie wybraną parę handlową niezależnie od rodzaju kontrolki."""
+        text_value = ""
+        try:
+            if isinstance(widget, QComboBox) and hasattr(widget, "currentText"):
+                text_value = widget.currentText()
+            elif isinstance(widget, QLineEdit) and hasattr(widget, "text"):
+                text_value = widget.text()
+            elif hasattr(widget, "text"):
+                text_value = widget.text()
+        except Exception:
+            text_value = ""
+
+        if not text_value:
+            text_value = default or ""
+
+        normalised = str(text_value).strip()
+        if not normalised:
+            return default or ""
+
+        normalised = normalised.replace("-", "/")
+        normalised = normalised.replace(" ", "")
+        return normalised.upper()
     
     def cancel_bot_edit(self):
         """Anuluje edycję bota"""

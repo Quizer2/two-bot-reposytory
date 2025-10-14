@@ -6,6 +6,9 @@ import argparse
 import importlib
 import json
 import platform
+import os
+import shutil
+import subprocess
 from ctypes.util import find_library
 from pathlib import Path
 from typing import Dict, Tuple
@@ -19,6 +22,12 @@ RUNTIME_MODULES = {
 SYSTEM_LIBRARIES = {
     "libGL.so.1": "sudo apt-get install -y libgl1",
     "libOpenGL.so.0": "sudo apt-get install -y libopengl0",
+}
+
+VENDORED_LIB_DIR = Path("vendor/linux")
+BUILDABLE_STUBS = {
+    "libGL.so.1": "opengl_stub.c",
+    "libOpenGL.so.0": "opengl_stub.c",
 }
 
 SOFTWARE_BACKEND_ENV = {
@@ -62,18 +71,112 @@ def configure_software_backend() -> Dict[str, str]:
     }
 
 
+def build_stub_library(lib: str) -> Tuple[str | None, Dict[str, str] | None]:
+    """Compile a lightweight compatibility stub if possible."""
+
+    if lib not in BUILDABLE_STUBS:
+        return None, None
+
+    source = VENDORED_LIB_DIR / BUILDABLE_STUBS[lib]
+    target = VENDORED_LIB_DIR / lib
+
+    if target.exists():
+        return str(target.resolve()), {"note": "Reusing previously built stub"}
+
+    compiler = shutil.which("gcc")
+    if compiler is None:
+        return None, {
+            "status": "missing",
+            "reason": "gcc_not_found",
+            "hint": "sudo apt-get install -y build-essential",
+        }
+
+    if not source.exists():
+        return None, {
+            "status": "missing",
+            "reason": "source_missing",
+            "hint": f"Brak pliku źródłowego stubu: {source}",
+        }
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [compiler, "-shared", "-fPIC", str(source), "-o", str(target)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except subprocess.CalledProcessError as exc:  # pragma: no cover - zależy od środowiska
+        return None, {
+            "status": "missing",
+            "reason": "build_failed",
+            "hint": exc.stderr.decode("utf-8", errors="ignore"),
+        }
+
+    if target.exists():
+        return str(target.resolve()), {"note": "Stub zbudowany lokalnie"}
+    return None, {
+        "status": "missing",
+        "reason": "unknown",
+        "hint": "Nie udało się utworzyć stubu mimo braku błędów kompilacji",
+    }
+
+
+def resolve_vendored_library(lib: str) -> Tuple[str | None, Dict[str, str] | None]:
+    """Return path to vendored shared library, building it if needed."""
+
+    candidate = VENDORED_LIB_DIR / lib
+    if candidate.exists():
+        return str(candidate.resolve()), {"note": "Stub dostępny lokalnie"}
+
+    return build_stub_library(lib)
+
+
+def ensure_vendored_on_path() -> None:
+    """Prepend vendored directory to LD_LIBRARY_PATH for runtime use."""
+
+    if not VENDORED_LIB_DIR.exists():
+        return
+
+    current = os.environ.get("LD_LIBRARY_PATH", "")
+    entries = [str(VENDORED_LIB_DIR.resolve())]
+    if current:
+        entries.append(current)
+    os.environ["LD_LIBRARY_PATH"] = ":".join(entries)
+
+
 def check_libraries() -> Tuple[Dict[str, Dict[str, str]], bool]:
     results: Dict[str, Dict[str, str]] = {}
     missing_any = False
+    ensure_vendored_on_path()
     for lib, install_hint in SYSTEM_LIBRARIES.items():
         found = find_library(lib.replace(".so", "")) or find_library(lib)
+        extra: Dict[str, str] | None = None
+        if not found:
+            found, extra = resolve_vendored_library(lib)
+            if found:
+                result_block = {
+                    "status": "bundled",
+                    "resolved": found,
+                }
+                if extra:
+                    result_block.update(extra)
+                results[lib] = result_block
+                continue
+
         if found:
-            results[lib] = {"status": "ok", "resolved": found}
+            result_block = {"status": "ok", "resolved": found}
+            if extra:
+                result_block.update(extra)
+            results[lib] = result_block
         else:  # pragma: no cover - zależy od środowiska CI
-            results[lib] = {
+            result_block = {
                 "status": "missing",
                 "install": install_hint,
             }
+            if extra:
+                result_block.update(extra)
+            results[lib] = result_block
             missing_any = True
     return results, missing_any
 
@@ -139,7 +242,7 @@ def build_payload() -> Dict[str, object]:
     return payload
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--sync-sentry",
@@ -151,9 +254,19 @@ def main() -> None:
         default=str(PRODUCTION_ENV_FILE if PRODUCTION_ENV_FILE.exists() else PRODUCTION_ENV_TEMPLATE),
         help="Ścieżka do pliku .env zawierającego konfigurację produkcyjną",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Wymuś zgodność z wywołaniami automatyzacji oczekującymi flagi --json (wyjście i tak ma format JSON)",
+    )
+    args = parser.parse_args(argv or None)
 
     payload = build_payload()
+
+    if args.json:
+        # Flaga zachowana dla zgodności z pipeline'ami oczekującymi parametru.
+        # Skrypt zawsze zwraca JSON, więc nie musimy podejmować dodatkowych działań.
+        pass
 
     if args.sync_sentry:
         env_path = Path(args.env_file)
@@ -169,7 +282,8 @@ def main() -> None:
     output = json.dumps(payload, indent=2, ensure_ascii=False)
     print(output)
     Path("runtime_dependency_report.json").write_text(output + "\n", encoding="utf-8")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

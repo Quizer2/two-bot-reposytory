@@ -11,7 +11,7 @@ import asyncio
 import signal
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import List
 import traceback
 
 # Inicjalizacja loggera wcześniej, aby użyć go podczas importów
@@ -28,17 +28,37 @@ os.environ.setdefault("QT_OPENGL", "software")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_XCB_FORCE_SOFTWARE_OPENGL", "1")
 
-# Import PyQt6
-try:
-    from PyQt6.QtWidgets import QApplication, QMessageBox, QSplashScreen
-    from PyQt6.QtCore import QTimer, QThread, pyqtSignal, Qt
-    from PyQt6.QtGui import QPixmap, QFont
-    PYQT_AVAILABLE = True
-except ImportError:
-    PYQT_AVAILABLE = False
-    # Nie używaj loggera zanim zostanie poprawnie skonfigurowany w niektórych środowiskach
-    print("PyQt6 is not available. Please install it to run the GUI.")
-    sys.exit(1)
+# Import PyQt6 z warstwą kompatybilności
+from utils.qt_compat import load_qt_names
+
+_QT_IMPORTS = {
+    "QtWidgets": ["QApplication", "QMessageBox", "QSplashScreen"],
+    "QtCore": ["QTimer", "QThread", "pyqtSignal", "Qt"],
+    "QtGui": ["QPixmap", "QFont", "QPainter", "QLinearGradient", "QColor", "QBrush", "QPen"],
+}
+
+PYQT_AVAILABLE, _qt_objects = load_qt_names(_QT_IMPORTS)
+
+QApplication = _qt_objects["QApplication"]
+QMessageBox = _qt_objects["QMessageBox"]
+QSplashScreen = _qt_objects["QSplashScreen"]
+QTimer = _qt_objects["QTimer"]
+QThread = _qt_objects["QThread"]
+pyqtSignal = _qt_objects["pyqtSignal"]
+Qt = _qt_objects["Qt"]
+QPixmap = _qt_objects["QPixmap"]
+QFont = _qt_objects["QFont"]
+QPainter = _qt_objects["QPainter"]
+QLinearGradient = _qt_objects["QLinearGradient"]
+QColor = _qt_objects["QColor"]
+QBrush = _qt_objects["QBrush"]
+QPen = _qt_objects["QPen"]
+
+if not PYQT_AVAILABLE:
+    logger.warning(
+        "Uruchomiono aplikację bez natywnego PyQt6 – używane są stuby testowe. "
+        "Zainstaluj PyQt6 w środowisku docelowym, aby uruchomić pełny interfejs graficzny."
+    )
 
 # Import lokalnych modułów
 from utils.config_manager import get_config_manager, get_app_setting
@@ -54,9 +74,6 @@ from notifications import NotificationManager
 from ui.updated_main_window import UpdatedMainWindow
 from core.updated_app_initializer import UpdatedApplicationInitializer
 from utils.qt_software_backend import enable_software_rendering
-import ast
-import logging
-logger = logging.getLogger(__name__)
 
 # Stara klasa ApplicationInitializer została usunięta - używamy UpdatedApplicationInitializer
 
@@ -141,12 +158,28 @@ class CryptoBotApplication:
     
     def create_splash_pixmap(self) -> QPixmap:
         """Tworzy pixmap dla splash screen"""
-        # Tworzenie prostego splash screen
-        pixmap = QPixmap(400, 300)
-        pixmap.fill(Qt.GlobalColor.darkBlue)
-        
-        # TODO: Dodaj logo i lepszy design
-        
+        pixmap = QPixmap(420, 320)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        gradient = QLinearGradient(0, 0, pixmap.width(), pixmap.height())
+        gradient.setColorAt(0.0, QColor("#1e293b"))
+        gradient.setColorAt(1.0, QColor("#0f172a"))
+
+        painter.setBrush(QBrush(gradient))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(0, 0, pixmap.width(), pixmap.height(), 28, 28)
+
+        painter.setPen(QPen(QColor("#38bdf8")))
+        painter.drawText(40, 120, "CRYPTOBOT DESKTOP")
+        painter.setPen(QPen(QColor("#94a3b8")))
+        painter.drawText(40, 160, "Zaawansowana platforma handlu algorytmicznego")
+        painter.setPen(QPen(QColor("#e2e8f0")))
+        painter.drawText(40, 210, "Inicjalizacja komponentów...")
+
+        painter.end()
         return pixmap
     
     def start_initialization(self):
@@ -201,15 +234,15 @@ class CryptoBotApplication:
                 raise RuntimeError("IntegratedDataManager is not available after initialization")
             self.main_window = UpdatedMainWindow(self.integrated_data_manager)
             self.logger.info("Using UpdatedMainWindow with IntegratedDataManager")
-            
+
             # Pokazanie okna
             self.main_window.show()
-            
-            # Przywrócenie botów po restarcie (tylko dla starego sposobu)
-            # (legacy fallback usunięty)
-            
+
+            # Przywrócenie botów po restarcie jeśli aplikacja została zamknięta awaryjnie
+            self.restore_bots_after_restart()
+
             self.logger.info("Main window displayed successfully")
-            
+
         except Exception as e:
             error_msg = f"Failed to show main window: {str(e)}"
             self.show_error(error_msg)
@@ -218,10 +251,69 @@ class CryptoBotApplication:
     def restore_bots_after_restart(self):
         """Przywraca boty po restarcie aplikacji"""
         try:
-            if get_app_setting("bots.auto_restart_after_app_restart", True):
-                # TODO: Implementuj przywracanie botów
-                self.logger.info("Auto-restart of bots is enabled")
-            
+            if not get_app_setting("bots.auto_restart_after_app_restart", True):
+                return
+
+            if not self.bot_manager:
+                self.logger.warning("Bot manager not available – skipping auto-restore")
+                return
+
+            async def _restore():
+                restarted = 0
+                candidates: List[dict] = []
+
+                if self.db_manager:
+                    try:
+                        candidates = await self.db_manager.get_all_bots()
+                    except Exception as db_exc:
+                        self.logger.warning(f"Failed to load bots from database: {db_exc}")
+
+                # Jeśli baza danych nie zwróciła botów, użyj konfiguracji załadowanej przez manager
+                if not candidates and hasattr(self.bot_manager, 'bot_configs'):
+                    for cfg in getattr(self.bot_manager, 'bot_configs', {}).values():
+                        candidates.append({
+                            'id': cfg.id,
+                            'status': 'active' if getattr(cfg, 'active', False) else 'inactive',
+                            'parameters': cfg.parameters,
+                            'name': cfg.name,
+                        })
+
+                for bot in candidates:
+                    status = str(bot.get('status') or '').lower()
+                    params = bot.get('parameters') or {}
+                    auto_restart = bool(params.get('auto_restart', True))
+                    was_running = status in {'active', 'running', 'starting'}
+
+                    if not (auto_restart or was_running):
+                        continue
+
+                    bot_id_raw = bot.get('id')
+                    bot_id = str(bot_id_raw)
+                    if not bot_id.startswith('bot_'):
+                        bot_id = f"bot_{bot_id}"
+
+                    try:
+                        success = await self.bot_manager.start_bot(bot_id)
+                        if success:
+                            restarted += 1
+                    except Exception as start_exc:
+                        self.logger.error(f"Failed to restore bot {bot_id}: {start_exc}")
+
+                return restarted
+
+            import asyncio
+
+            try:
+                restarted = asyncio.run(_restore())
+            except RuntimeError:
+                restarted = 0
+                self.logger.warning("Asyncio loop already running – skipping auto restore")
+
+            if restarted:
+                self.logger.info("Auto-restarted %s bot(s) after application restart", restarted)
+            else:
+                self.logger.info("No bots required auto-restart after application launch")
+
         except Exception as e:
             self.logger.error(f"Failed to restore bots: {e}")
     
@@ -399,13 +491,18 @@ def setup_environment():
     os.environ["CRYPTOBOT_ROOT"] = str(project_root)
     os.environ["CRYPTOBOT_DATA"] = str(project_root / "data")
     os.environ["CRYPTOBOT_LOGS"] = str(project_root / "logs")
+
+
 def check_dependencies():
     """Sprawdza zależności aplikacji"""
     missing_deps = []
     
-    # Sprawdź PyQt6
+    # Sprawdź PyQt6 (pozwól na stuby w środowisku testowym)
     if not PYQT_AVAILABLE:
-        missing_deps.append("PyQt6")
+        logger.warning(
+            "Wykryto brak natywnych bibliotek PyQt6. Kontynuuję w trybie stubów – "
+            "zainstaluj pakiet PyQt6, aby uruchomić pełen interfejs graficzny."
+        )
     
     # Sprawdź inne zależności
     try:

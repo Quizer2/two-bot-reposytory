@@ -100,6 +100,8 @@ Skrypt zwraca status trybu handlu (paper/live), kompletność kluczy API, popraw
 
 ### Metoda 1: Przez interfejs użytkownika
 
+> 💡 Zalecamy uruchomić `python main.py check-deps`, aby upewnić się, że środowisko produkcyjne ma komplet bibliotek.
+
 1. **Otwórz aplikację**:
    ```bash
    python main.py
