@@ -231,6 +231,19 @@ class UpdatedApplicationInitializer(QThread):
                 # Uruchom pętle aktualizacji danych
                 await self.integrated_data_manager.start_data_loops()
             
+            if self.updated_bot_manager:
+                if self.updated_risk_manager:
+                    self.updated_bot_manager.risk_manager = self.updated_risk_manager
+
+                if self.integrated_data_manager:
+                    self.updated_bot_manager.data_manager = self.integrated_data_manager
+
+                if self.notification_manager and hasattr(self.updated_bot_manager, 'set_notification_manager'):
+                    try:
+                        self.updated_bot_manager.set_notification_manager(self.notification_manager)
+                    except Exception as exc:
+                        logger.warning(f"Could not attach NotificationManager to UpdatedBotManager: {exc}")
+
             # Połącz RiskManager z TradingEngine
             if self.updated_risk_manager and self.trading_engine:
                 # Risk Manager będzie walidował wszystkie zlecenia
@@ -306,7 +319,11 @@ class UpdatedApplicationInitializer(QThread):
     async def _init_database_manager(self):
         """Inicjalizuje database manager"""
         self.db_manager = DatabaseManager()
-        await asyncio.sleep(0.1)
+        try:
+            await self.db_manager.initialize()
+        except Exception as exc:
+            logger.warning("DatabaseManager initialize failed: %s", exc)
+            raise
     
     async def _init_trading_engine(self):
         """Inicjalizuje trading engine"""

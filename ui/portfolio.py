@@ -6,6 +6,7 @@ statystykach i wydajności portfela.
 """
 
 import sys
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
@@ -180,6 +181,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.config_manager import get_config_manager, get_ui_setting, get_app_setting
+from core.portfolio_manager import get_portfolio_manager, PortfolioSummary, AssetPosition
 from utils.logger import get_logger, LogType
 from utils.helpers import FormatHelper, CalculationHelper
 
@@ -590,9 +592,10 @@ class PortfolioStatsWidget(QWidget):
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, PortfolioStatsWidget will not function properly")
             return
-            
+
         try:
             super().__init__(parent)
+            self.stats_labels: Dict[Tuple[str, str], QLabel] = {}
             self.setup_ui()
         except Exception as e:
             print(f"Error initializing PortfolioStatsWidget: {e}")
@@ -669,30 +672,80 @@ class PortfolioStatsWidget(QWidget):
         
         layout.addStretch()
     
-    def create_stat_group(self, title: str, stats: List[Tuple[str, str]], 
+    def create_stat_group(self, title: str, stats: List[Tuple[str, str]],
                          grid: QGridLayout, row: int, col: int):
         """Tworzy grupę statystyk"""
         group = QGroupBox(title)
         group_layout = QFormLayout(group)
-        
+
         for stat_name, stat_value in stats:
             label = QLabel(stat_value)
             label.setStyleSheet("font-weight: bold;")
             group_layout.addRow(stat_name + ":", label)
-        
+            if hasattr(self, 'stats_labels'):
+                self.stats_labels[(title, stat_name)] = label
+
         grid.addWidget(group, row, col)
-    
+
     def update_stats(self, portfolio_data: Dict):
         """Aktualizuje statystyki portfela"""
-        # TODO: Implementuj aktualizację statystyk na podstawie danych
-        pass
+        if not hasattr(self, 'stats_labels'):
+            return
+
+        summary: Optional[PortfolioSummary] = portfolio_data.get('summary') if isinstance(portfolio_data, dict) else None
+        balances: List[Dict[str, Any]] = portfolio_data.get('balances', []) if isinstance(portfolio_data, dict) else []
+        transactions: List[Dict[str, Any]] = portfolio_data.get('transactions', []) if isinstance(portfolio_data, dict) else []
+
+        total_value = summary.total_value if summary else sum(item.get('usd_value', 0.0) for item in balances)
+        daily_change = summary.daily_change if summary else 0.0
+        daily_change_percent = summary.daily_change_percent if summary else 0.0
+
+        largest_position = None
+        if summary and summary.positions:
+            largest_position = max(summary.positions, key=lambda pos: pos.value)
+        elif balances:
+            largest_position = max(balances, key=lambda pos: pos.get('usd_value', 0.0))
+
+        allocation_text = "N/A"
+        if largest_position:
+            if isinstance(largest_position, AssetPosition):
+                share = (largest_position.value / total_value * 100) if total_value else 0.0
+                allocation_text = f"{largest_position.symbol} ({share:.2f}%)"
+            else:
+                value = float(largest_position.get('usd_value', 0.0))
+                share = (value / total_value * 100) if total_value else 0.0
+                allocation_text = f"{largest_position.get('symbol', 'N/A')} ({share:.2f}%)"
+
+        stats_payload = {
+            ('Ogólne', 'Całkowita wartość'): f"${total_value:,.2f}",
+            ('Ogólne', 'Zmiana 24h'): f"${daily_change:+,.2f} ({daily_change_percent:+.2f}%)",
+            ('Ogólne', 'Zmiana 7d'): "N/A",
+            ('Ogólne', 'Zmiana 30d'): "N/A",
+            ('Handel', 'Całkowity P&L'): f"${(summary.total_profit_loss if summary else 0.0):+,.2f}",
+            ('Handel', 'Dzienny P&L'): f"${daily_change:+,.2f}",
+            ('Handel', 'Liczba transakcji'): str(len(transactions)),
+            ('Handel', 'Wskaźnik wygranych'): portfolio_data.get('win_rate', 'N/A'),
+            ('Alokacja', 'Największa pozycja'): allocation_text,
+            ('Alokacja', 'Liczba aktywów'): str(len(summary.positions) if summary else len(balances)),
+            ('Alokacja', 'Dywersyfikacja'): portfolio_data.get('diversification', 'N/A'),
+            ('Alokacja', 'Wolne środki'): f"${(summary.available_balance if summary else 0.0):,.2f}",
+            ('Ryzyko', 'Maksymalny drawdown'): f"{portfolio_data.get('max_drawdown', 0.0):.2f}%",
+            ('Ryzyko', 'Volatility (30d)'): portfolio_data.get('volatility_30d', 'N/A'),
+            ('Ryzyko', 'Sharpe Ratio'): portfolio_data.get('sharpe_ratio', 'N/A'),
+            ('Ryzyko', 'Beta'): portfolio_data.get('beta', 'N/A'),
+        }
+
+        for key, value in stats_payload.items():
+            label = self.stats_labels.get(key)
+            if label:
+                label.setText(str(value))
 
 class PortfolioWidget(QWidget):
     """Główny widget portfela"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
+
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, PortfolioWidget will not function properly")
             return
@@ -704,13 +757,21 @@ class PortfolioWidget(QWidget):
             print(f"Error initializing config/logger: {e}")
             self.config_manager = None
             self.logger = None
-        
+
+        try:
+            self.portfolio_manager = get_portfolio_manager()
+        except Exception as e:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(f"Failed to obtain PortfolioManager: {e}")
+            self.portfolio_manager = None
+
         # Dane portfela
         self.portfolio_data = {}
         self.balances = {}
         self.transactions = []
         self.balance_data = []  # Lista danych o balansach dla kart
-        
+        self._portfolio_manager_initialized = False
+
         # Timer odświeżania
         try:
             self.refresh_timer = QTimer()
@@ -727,7 +788,31 @@ class PortfolioWidget(QWidget):
             print(f"Error setting up Portfolio UI: {e}")
             if hasattr(self, 'logger') and self.logger:
                 self.logger.error(f"Portfolio UI setup failed: {e}")
-    
+
+    def _run_async_task(self, coro):
+        """Uruchamia coroutine w dedykowanej pętli event loop."""
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            try:
+                asyncio.set_event_loop(None)
+            except Exception:
+                pass
+            loop.close()
+
+    def _ensure_portfolio_manager_initialized(self):
+        if not self.portfolio_manager or self._portfolio_manager_initialized:
+            return
+
+        try:
+            self._run_async_task(self.portfolio_manager.initialize())
+            self._portfolio_manager_initialized = True
+        except Exception as exc:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(f"Failed to initialize PortfolioManager: {exc}")
+
     def setup_ui(self):
         """Konfiguracja interfejsu"""
         layout = QVBoxLayout(self)
@@ -1109,40 +1194,99 @@ class PortfolioWidget(QWidget):
         """Odświeża dane portfela"""
         if not PYQT_AVAILABLE:
             return
-            
+
+        self._ensure_portfolio_manager_initialized()
+
         if hasattr(self, 'logger'):
-            self.logger.info("Portfolio refresh started - loading data from API")
-            
-        try:
-            # Ładuj prawdziwe dane z API
-            import asyncio
+            self.logger.info("Refreshing portfolio snapshot from PortfolioManager")
+
+        snapshot = self._load_portfolio_snapshot()
+        if not snapshot:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.warning("Portfolio snapshot unavailable – reloading fallback data")
             try:
-                if hasattr(self, 'logger'):
-                    self.logger.info("Attempting to load real portfolio data from exchange API")
-                asyncio.run(self.load_real_data())
-            except RuntimeError:
-                # Jeśli już jesteśmy w pętli asyncio, użyj synchronicznej wersji
-                if hasattr(self, 'logger'):
-                    self.logger.info("AsyncIO runtime error - falling back to sample data")
-                asyncio.run(self.load_empty_data())
-                
-            if hasattr(self, 'logger'):
-                self.logger.info("Updating portfolio UI components")
-                
-            self.update_portfolio_summary()
-            self.update_balances_display()
-            self.update_transaction_history()
-            
-            if hasattr(self, 'logger'):
-                self.logger.info("Portfolio data refreshed successfully - UI updated")
-            
-        except Exception as e:
-            if hasattr(self, 'logger'):
-                self.logger.error(f"Error refreshing portfolio data: {e}")
-            print(f"Portfolio refresh error: {e}")
-            # Fallback do pustych danych
-            import asyncio
-            asyncio.run(self.load_empty_data())
+                self._run_async_task(self.load_empty_data())
+                self.update_portfolio_summary()
+                self.update_balances_display()
+                self.update_transaction_history()
+            except Exception as exc:
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.error(f"Failed to load fallback portfolio data: {exc}")
+            return
+
+        summary, balances, transactions = snapshot
+
+        trading_mode = get_app_setting('trading.mode', 'paper')
+
+        self.portfolio_data = {
+            'total_value': summary.total_value,
+            'change_24h': summary.daily_change,
+            'change_24h_percent': summary.daily_change_percent,
+            'daily_pnl': summary.daily_change,
+            'mode': trading_mode,
+            'trades_count': len(transactions),
+            'initial_balance': summary.invested_amount,
+            'available_balance': summary.available_balance,
+        }
+
+        self.balance_data = balances
+        self.balances = {item['symbol']: item for item in balances}
+        self.transactions = transactions
+
+        self.update_portfolio_summary()
+        self.update_balances_display()
+        self.update_transaction_history()
+
+        if hasattr(self, 'portfolio_stats') and self.portfolio_stats:
+            stats_payload = {
+                'summary': summary,
+                'balances': balances,
+                'transactions': transactions,
+            }
+            self.portfolio_stats.update_stats(stats_payload)
+
+        if hasattr(self, 'logger'):
+            self.logger.info("Portfolio UI refreshed with latest data")
+
+    def _load_portfolio_snapshot(self):
+        if not self.portfolio_manager:
+            return None
+
+        async def _fetch():
+            summary = await self.portfolio_manager.get_portfolio_summary()
+            positions = summary.positions if summary else []
+
+            balances: List[Dict[str, Any]] = []
+            for position in positions:
+                if isinstance(position, AssetPosition):
+                    balances.append({
+                        'symbol': position.symbol,
+                        'balance': position.amount,
+                        'usd_value': position.value,
+                        'change_24h': position.profit_loss_percent,
+                        'price': position.current_price,
+                        'average_price': position.average_price,
+                        'last_update': position.last_updated.isoformat(),
+                        'exchange': get_app_setting('trading.exchange', 'N/A'),
+                    })
+
+            trades: List[Dict[str, Any]] = []
+            data_manager = getattr(self.portfolio_manager, 'data_manager', None)
+            if data_manager and hasattr(data_manager, 'get_recent_trades'):
+                try:
+                    trades = await data_manager.get_recent_trades(limit=100)
+                except Exception as exc:
+                    if hasattr(self, 'logger') and self.logger:
+                        self.logger.warning(f"Failed to load recent trades: {exc}")
+
+            return summary, balances, trades
+
+        try:
+            return self._run_async_task(_fetch())
+        except Exception as exc:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(f"Error loading portfolio snapshot: {exc}")
+            return None
     
     async def load_real_data(self):
         """Ładuje prawdziwe dane portfolio z API"""

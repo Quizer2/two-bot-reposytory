@@ -106,7 +106,28 @@ class ConfigManager:
                 "default_take_profit_percent": 10.0,
                 "max_open_positions": 10,
                 "paper_trading": False,
-                "slippage_tolerance_percent": 0.5
+                "slippage_tolerance_percent": 0.5,
+                "supported_pairs": [
+                    "BTC/USDT",
+                    "ETH/USDT",
+                    "BNB/USDT",
+                    "SOL/USDT",
+                    "ADA/USDT",
+                    "XRP/USDT",
+                    "DOT/USDT",
+                    "MATIC/USDT",
+                    "DOGE/USDT",
+                    "LTC/USDT",
+                    "AVAX/USDT",
+                    "LINK/USDT",
+                    "BTC/EUR",
+                    "ETH/EUR",
+                    "BTC/USD",
+                    "ETH/USD",
+                    "BTC/GBP",
+                    "ETH/GBP",
+                    "ADA/EUR"
+                ]
             }
         }
     
@@ -671,7 +692,37 @@ class ConfigManager:
         """Zwraca listę dostępnych giełd"""
         app_config = self.get_app_config()
         return app_config.get("exchanges", {}).get("available", [])
-    
+
+    def get_supported_trading_pairs(self) -> List[str]:
+        """Zwraca listę wspieranych par handlowych dla kreatora botów."""
+
+        app_config = self.get_app_config()
+        trading_cfg = app_config.get("trading", {}) if isinstance(app_config, dict) else {}
+        raw_pairs = trading_cfg.get("supported_pairs")
+
+        if not raw_pairs:
+            default_quote = trading_cfg.get("default_quote_currency", "USDT")
+            return [f"BTC/{default_quote}", f"ETH/{default_quote}"]
+
+        normalised: List[str] = []
+        seen = set()
+        for entry in raw_pairs:
+            if not entry:
+                continue
+            candidate = str(entry).strip().upper()
+            if not candidate:
+                continue
+            candidate = candidate.replace("-", "/").replace(" ", "")
+            if candidate not in seen:
+                normalised.append(candidate)
+                seen.add(candidate)
+
+        if not normalised:
+            default_quote = trading_cfg.get("default_quote_currency", "USDT")
+            return [f"BTC/{default_quote}", f"ETH/{default_quote}"]
+
+        return normalised
+
     def _get_timestamp(self) -> str:
         """Zwraca aktualny timestamp"""
         return datetime.now(timezone.utc).isoformat()
