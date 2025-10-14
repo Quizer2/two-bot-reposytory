@@ -5,6 +5,8 @@
 ### 1. Sprawdź środowisko
 ```cmd
 powershell -ExecutionPolicy Bypass -File start.ps1 -CheckOnly
+# lub platformowo niezależnie
+python main.py check-deps
 ```
 
 ### 2. Zainstaluj zależności (jeśli potrzeba)

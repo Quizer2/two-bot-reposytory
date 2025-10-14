@@ -3,7 +3,8 @@
 ## Szybki start
 ```bash
 pip install -r requirements.txt prometheus_client PyQt6
-python app.py  # albo start głównego modułu aplikacji
+python main.py check-deps  # opcjonalna kontrola środowiska przed startem
+python main.py             # uruchomienie aplikacji z GUI
 # Prometheus exporter: http://localhost:8000/metrics
 ```
 

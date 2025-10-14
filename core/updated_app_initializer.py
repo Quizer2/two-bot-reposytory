@@ -319,7 +319,11 @@ class UpdatedApplicationInitializer(QThread):
     async def _init_database_manager(self):
         """Inicjalizuje database manager"""
         self.db_manager = DatabaseManager()
-        await asyncio.sleep(0.1)
+        try:
+            await self.db_manager.initialize()
+        except Exception as exc:
+            logger.warning("DatabaseManager initialize failed: %s", exc)
+            raise
     
     async def _init_trading_engine(self):
         """Inicjalizuje trading engine"""
