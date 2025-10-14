@@ -14,6 +14,7 @@ import json
 # Importy lokalne
 from utils.config_manager import ConfigManager
 from core.integrated_data_manager import get_integrated_data_manager
+from core.trading_engine import OrderRequest, OrderSide, OrderType, OrderStatus
 
 
 class TradingMode(Enum):
@@ -121,7 +122,9 @@ class TradingModeManager:
         self.paper_balances: Dict[str, PaperBalance] = {}
         self.paper_orders: List[TradingOrder] = []
         self.paper_trades: List[Dict] = []
-        
+        self.live_orders: List[TradingOrder] = []
+        self.live_trades: List[Dict[str, Any]] = []
+
         # Managery
         self.risk_manager = None
         self.notification_manager = None
@@ -580,12 +583,93 @@ class TradingModeManager:
             if not await self.check_live_balance(symbol, side, amount, price, balance):
                 self.logger.error("Niewystarczające środki na koncie")
                 return None
-            
-            # TODO: Implementacja składania prawdziwych zleceń przez API
-            # Na razie zwracamy None
-            self.logger.warning("Składanie prawdziwych zleceń nie jest jeszcze zaimplementowane")
-            return None
-            
+
+            trading_engine = getattr(self.data_manager, 'trading_engine', None)
+            if trading_engine is None:
+                self.logger.error("Trading engine nie jest dostępny - nie mogę złożyć zlecenia live")
+                return None
+
+            try:
+                side_enum = OrderSide.BUY if side.lower() == 'buy' else OrderSide.SELL
+                order_type_enum = OrderType.MARKET if order_type.lower() == 'market' else OrderType.LIMIT
+            except Exception:
+                self.logger.error(f"Nieobsługiwany typ zlecenia: {order_type}")
+                return None
+
+            request = OrderRequest(
+                symbol=symbol,
+                side=side_enum,
+                order_type=order_type_enum,
+                quantity=amount,
+                price=price,
+                client_order_id=f"live_{int(datetime.now().timestamp() * 1000)}"
+            )
+
+            if self.risk_manager:
+                try:
+                    risk_ok = await self.risk_manager.check_order_risk(
+                        bot_id=0,
+                        symbol=symbol,
+                        side=side,
+                        amount=amount,
+                        price=price
+                    )
+                    if not risk_ok:
+                        self.logger.warning("Zlecenie odrzucone przez system zarządzania ryzykiem")
+                        return None
+                except Exception as exc:
+                    self.logger.warning(f"Błąd walidacji ryzyka dla zlecenia live: {exc}")
+                    return None
+
+            response = await trading_engine.place_order(request)
+
+            status_map = {
+                OrderStatus.FILLED: 'filled',
+                OrderStatus.PARTIALLY_FILLED: 'partially_filled',
+                OrderStatus.NEW: 'pending',
+                OrderStatus.CANCELED: 'cancelled',
+                OrderStatus.REJECTED: 'rejected',
+                OrderStatus.EXPIRED: 'expired',
+            }
+            status = status_map.get(response.status, 'pending')
+            executed_price = response.average_price or response.price or price or 0.0
+
+            order = TradingOrder(
+                id=response.order_id,
+                symbol=response.symbol,
+                side=side.lower(),
+                amount=response.quantity,
+                price=executed_price,
+                order_type=order_type.lower(),
+                status=status,
+                timestamp=response.timestamp,
+                mode=TradingMode.LIVE,
+                exchange=(response.metadata or {}).get('adapter', 'live'),
+                fee=response.commission or 0.0,
+                filled_amount=response.filled_quantity or 0.0
+            )
+
+            with self._lock:
+                self.live_orders.append(order)
+                if order.status in ('filled', 'partially_filled'):
+                    trade_entry = {
+                        'id': order.id,
+                        'timestamp': order.timestamp.isoformat() if isinstance(order.timestamp, datetime) else order.timestamp,
+                        'symbol': order.symbol,
+                        'side': order.side,
+                        'amount': order.filled_amount or order.amount,
+                        'price': order.price,
+                        'fee': order.fee,
+                        'mode': 'live'
+                    }
+                    self.live_trades.append(trade_entry)
+
+            self.logger.info(
+                f"Zlecenie Live złożone: {order.side} {order.amount} {order.symbol} @ {order.price} (status: {order.status})"
+            )
+
+            return order
+
         except Exception as e:
             self.logger.error(f"Błąd prawdziwego zlecenia: {e}")
             return None
@@ -798,15 +882,25 @@ class TradingModeManager:
     async def get_live_statistics(self) -> Dict[str, Any]:
         """Pobiera statystyki Live Trading"""
         try:
-            # TODO: Implementacja statystyk Live Trading
+            total_value = 0.0
+            total_pnl = 0.0
+            try:
+                portfolio_snapshot = await self.data_manager.get_portfolio_widget_data()
+                if isinstance(portfolio_snapshot, dict):
+                    summary = portfolio_snapshot.get('summary') or {}
+                    total_value = float(summary.get('total_value', 0.0) or 0.0)
+                    total_pnl = float(summary.get('unrealized_pnl', 0.0) or 0.0)
+            except Exception as exc:
+                self.logger.debug(f"Nie udało się pobrać danych portfela: {exc}")
+
             return {
                 'mode': 'live',
-                'total_value': 0.0,
-                'total_pnl': 0.0,
-                'trades_count': 0,
-                'orders_count': 0
+                'total_value': total_value,
+                'total_pnl': total_pnl,
+                'trades_count': len(self.live_trades),
+                'orders_count': len(self.live_orders)
             }
-            
+
         except Exception as e:
             self.logger.error(f"Błąd statystyk Live Trading: {e}")
             return {}

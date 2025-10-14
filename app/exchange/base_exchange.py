@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Any
 
 
 class BaseExchange(ABC):
+    EXCHANGE_SLUG: str | None = None
+
     def __init__(self, api_key: str, api_secret: str, testnet: bool = False):
         self.api_key = api_key
         self.api_secret = api_secret
@@ -24,6 +26,8 @@ class BaseExchange(ABC):
         self.is_connected: bool = False
         self.min_request_interval: float = 0.2
         self.last_request_time: float = 0.0
+        slug = (self.EXCHANGE_SLUG or self.__class__.__name__.replace("Exchange", "")).lower()
+        self.guard_namespace = slug
 
     async def connect(self) -> None:
         """Establish connections/resources if needed."""

@@ -266,6 +266,7 @@ class KuCoinExchange(BaseExchange):
             logger.error(f"Błąd podczas tworzenia zlecenia KuCoin {pair}: {e}", exc_info=True)
             return None
     
+    @net_guard('exchange:cancel_order')
     async def cancel_order(self, order_id: str, pair: str) -> bool:
         """Anulowanie zlecenia na KuCoin"""
         try:

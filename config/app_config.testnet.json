@@ -1,0 +1,7 @@
+{
+  "mode": "paper",
+  "exchange": "binanceusdm",
+  "risk": {
+    "limits": {}
+  }
+}

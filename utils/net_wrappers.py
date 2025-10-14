@@ -72,19 +72,33 @@ def get_guard(name: str) -> Tuple[TokenBucket, CircuitBreaker]:
         _breakers[key] = br
         return tb, br
 
+def _resolve_guard_name(base_name: str, args: tuple) -> str:
+    if base_name.startswith("exchange:") and args:
+        instance = args[0]
+        namespace = getattr(instance, "guard_namespace", None) or getattr(
+            instance, "EXCHANGE_SLUG", None
+        ) or getattr(instance, "exchange_id", None) or getattr(instance, "name", None)
+        if namespace:
+            prefix, rest = base_name.split(":", 1)
+            if namespace:
+                return f"{str(namespace).lower()}:{rest}"
+    return base_name
+
+
 def net_guard(name: str) -> Callable:
-    bucket, breaker = get_guard(name)
     def deco(fn: Callable):
         is_coro = inspect.iscoroutinefunction(fn)
-        
+
         @wraps(fn)
         async def async_wrapper(*args, **kwargs):
+            resolved_name = _resolve_guard_name(name, args)
+            bucket, breaker = get_guard(resolved_name)
             # Rate limit
-            ex = name.split(':', 1)[0]
+            ex = resolved_name.split(':', 1)[0]
             method_label = 'NA'
             endpoint_label = 'NA'
             try:
-                parts2 = name.split(':', 2)
+                parts2 = resolved_name.split(':', 2)
                 if len(parts2) >= 3:
                     method_label = 'REST' if 'rest' in parts2[1] else ('WS' if 'ws' in parts2[1] else parts2[1].upper())
                     endpoint_label = parts2[2]
@@ -101,7 +115,7 @@ def net_guard(name: str) -> Callable:
                     rt.record_rate_drop(ex, endpoint_label)
                 except Exception:
                     pass
-                raise RuntimeError(f"rate_limited:{name}")
+                raise RuntimeError(f"rate_limited:{resolved_name}")
             status_label = 'OK'
             t0 = time.monotonic()
             try:
@@ -117,7 +131,7 @@ def net_guard(name: str) -> Callable:
                 except Exception:
                     pass
                 try:
-                    rt.record_http_latency_ms(dt)
+                    rt.record_http_latency_ms(dt, exchange=ex, endpoint=endpoint_label)
                 except Exception:
                     pass
                 try:
@@ -128,12 +142,14 @@ def net_guard(name: str) -> Callable:
 
         @wraps(fn)
         def sync_wrapper(*args, **kwargs):
+            resolved_name = _resolve_guard_name(name, args)
+            bucket, breaker = get_guard(resolved_name)
             # Rate limit
-            ex = name.split(':', 1)[0]
+            ex = resolved_name.split(':', 1)[0]
             method_label = 'NA'
             endpoint_label = 'NA'
             try:
-                parts2 = name.split(':', 2)
+                parts2 = resolved_name.split(':', 2)
                 if len(parts2) >= 3:
                     method_label = 'REST' if 'rest' in parts2[1] else ('WS' if 'ws' in parts2[1] else parts2[1].upper())
                     endpoint_label = parts2[2]
@@ -150,7 +166,7 @@ def net_guard(name: str) -> Callable:
                     rt.record_rate_drop(ex, endpoint_label)
                 except Exception:
                     pass
-                raise RuntimeError(f"rate_limited:{name}")
+                raise RuntimeError(f"rate_limited:{resolved_name}")
             status_label = 'OK'
             t0 = time.monotonic()
             try:
@@ -166,7 +182,7 @@ def net_guard(name: str) -> Callable:
                 except Exception:
                     pass
                 try:
-                    rt.record_http_latency_ms(dt)
+                    rt.record_http_latency_ms(dt, exchange=ex, endpoint=endpoint_label)
                 except Exception:
                     pass
                 try:

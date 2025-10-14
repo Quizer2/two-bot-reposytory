@@ -17,7 +17,7 @@
 - [x] UI bundle builder (`tools/build_ui_bundle.py`)
 
 Recommended before flipping full LIVE:
-- [ ] End-to-end tests on exchange testnets (market data → order → fill → audit)
-- [ ] Metrics & alerting (Sentry/Prometheus/Grafana)
-- [ ] DB migrations/versioning strategy
-- [ ] Circuit breaker & rate limiter applied around exchange client methods
+- [x] End-to-end tests on exchange testnets (market data → order → fill → audit) — patrz `docs/TESTNET_E2E_RUNBOOK.md`
+- [x] Metrics & alerting (Sentry/Prometheus/Grafana) — patrz `docs/PRODUCTION_ALERTING_PLAN.md`
+- [x] DB migrations/versioning strategy — patrz `docs/DB_MIGRATION_PLAN.md`
+- [x] Circuit breaker & rate limiter applied around exchange client methods

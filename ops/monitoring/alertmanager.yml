@@ -1,0 +1,7 @@
+route:
+  receiver: slack
+receivers:
+  - name: slack
+    slack_configs:
+      - channel: '#cryptobot-alerts'
+        send_resolved: true

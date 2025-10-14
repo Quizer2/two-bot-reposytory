@@ -53,6 +53,51 @@ class DatabaseManager:
         self.db_path = str(resolved_path)
         self._conn = None
 
+    def _row_to_bot_dict(self, row) -> Dict[str, Any]:
+        """Konwertuje rekord bota na słownik z deserializacją JSON."""
+        if row is None:
+            return {}
+        try:
+            parameters = json.loads(row["parameters"]) if row["parameters"] else {}
+        except Exception:
+            parameters = {}
+        return {
+            'id': row['id'],
+            'user_id': row['user_id'],
+            'name': row['name'],
+            'type': row['type'],
+            'exchange': row['exchange'],
+            'pair': row['pair'],
+            'parameters': parameters,
+            'status': row['status'],
+            'created_at': row['created_at'],
+            'started_at': row['started_at'],
+            'stopped_at': row['stopped_at'],
+            'total_profit': row['total_profit'],
+            'total_trades': row['total_trades'],
+            'win_rate': row['win_rate'],
+            'max_drawdown': row['max_drawdown'],
+            'last_error': row['last_error'],
+        }
+
+    def _row_to_user_dict(self, row) -> Dict[str, Any]:
+        """Konwertuje rekord użytkownika na słownik z deserializacją ustawień."""
+        if row is None:
+            return {}
+        try:
+            settings = json.loads(row['settings']) if row['settings'] else {}
+        except Exception:
+            settings = {}
+        return {
+            'id': row['id'],
+            'username': row['username'],
+            'email': row['email'],
+            'created_at': row['created_at'],
+            'last_login': row['last_login'],
+            'is_active': row['is_active'],
+            'settings': settings,
+        }
+
     async def get_connection(self):
         """Pobiera połączenie z bazy danych"""
         try:
@@ -138,7 +183,7 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
-                type TEXT NOT NULL CHECK (type IN ('DCA', 'Grid', 'Scalping', 'Custom')),
+                type TEXT NOT NULL CHECK (type IN ('DCA', 'Grid', 'Scalping', 'Custom', 'AI')),
                 exchange TEXT NOT NULL,
                 pair TEXT NOT NULL,
                 parameters JSON NOT NULL,
@@ -349,6 +394,32 @@ class DatabaseManager:
                 UNIQUE(date, channel, notification_type)
             )
         ''')
+
+        # Tabela stanów strategii
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS strategy_states (
+                bot_id INTEGER PRIMARY KEY,
+                strategy_type TEXT NOT NULL,
+                state JSON NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+            )
+        ''')
+
+        # Tabela operacji strategii (utrwalanie harmonogramów/zleceń)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS strategy_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                order_id TEXT NOT NULL,
+                payload JSON NOT NULL,
+                status TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(bot_id, order_id),
+                FOREIGN KEY (bot_id) REFERENCES bots (id) ON DELETE CASCADE
+            )
+        ''')
         
         # Tabela pozycji handlowych (dla zarządzania ryzykiem)
         await conn.execute('''
@@ -373,7 +444,31 @@ class DatabaseManager:
             )
         ''')
         # positions constraints are enforced centrally by utils.db_migrations.apply_migrations
-        
+
+        # Globalny stan failover/failsafe aplikacji
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS system_failover_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                last_heartbeat DATETIME,
+                status TEXT NOT NULL DEFAULT 'unknown',
+                active_bots INTEGER DEFAULT 0,
+                open_orders INTEGER DEFAULT 0,
+                context JSON,
+                clean_shutdown BOOLEAN DEFAULT 1,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS system_failover_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type TEXT NOT NULL,
+                details JSON,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # Indeksy dla wydajności
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_bots_user_id ON bots(user_id)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_bots_status ON bots(status)')
@@ -387,9 +482,11 @@ class DatabaseManager:
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_risk_metrics_bot_id ON risk_metrics(bot_id)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_notification_history_user_id ON notification_history(user_id)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_notification_history_created_at ON notification_history(created_at)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_strategy_orders_bot_id ON strategy_orders(bot_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_strategy_orders_created_at ON strategy_orders(created_at)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_positions_bot_id ON positions(bot_id)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)')
-        
+
         await conn.commit()
     
     # === OPERACJE NA UŻYTKOWNIKACH ===
@@ -444,45 +541,40 @@ class DatabaseManager:
         """Uwierzytelnienie użytkownika"""
         try:
             conn = await self.get_connection()
-            cursor = await conn.execute('''
+            cursor = await conn.execute(
+                '''
                 SELECT id, username, password_hash, salt, email, is_active, settings
                 FROM users WHERE username = ?
-            ''', (username,))
+                ''',
+                (username,),
+            )
             row = await cursor.fetchone()
-            # TODO: verify password with stored salt/hash; simplified here
-            return dict(row) if row else None
-        except Exception as e:
-            logger.info(f"Auth error: {e}")
-            return None
-            if not user:
+            if not row:
                 return None
-            
-            # Sprawdź hasło
+
+            user = dict(row)
             if not self.verify_password(password, user['password_hash'], user['salt']):
                 return None
-            
-            # Sprawdź czy konto jest aktywne
+
             if not user['is_active']:
                 return None
-            
-            # Aktualizuj last_login
+
             await conn.execute(
                 'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?',
                 (user['id'],)
             )
             await conn.commit()
-            
+
             return {
                 'id': user['id'],
                 'username': user['username'],
                 'email': user['email'],
                 'settings': json.loads(user['settings']) if user['settings'] else {}
             }
-            
+
         except Exception as e:
-            
-            logger.info("Błąd podczas uwierzytelniania: %s" % e)
-        return None
+            logger.info(f"Błąd podczas uwierzytelniania: {e}")
+            return None
 
     async def get_user(self, user_id: int) -> Optional[Dict]:
         """Pobranie danych użytkownika"""
@@ -606,35 +698,18 @@ class DatabaseManager:
         """Pobranie danych bota"""
         try:
             conn = await self.get_connection()
-            
+
             cursor = await conn.execute('''
                 SELECT * FROM bots WHERE id = ?
             ''', (bot_id,))
-            
+
             bot = await cursor.fetchone()
             if bot:
-                return {
-                    'id': bot['id'],
-                    'user_id': bot['user_id'],
-                    'name': bot['name'],
-                    'type': bot['type'],
-                    'exchange': bot['exchange'],
-                    'pair': bot['pair'],
-                    'parameters': json.loads(bot['parameters']),
-                    'status': bot['status'],
-                    'created_at': bot['created_at'],
-                    'started_at': bot['started_at'],
-                    'stopped_at': bot['stopped_at'],
-                    'total_profit': bot['total_profit'],
-                    'total_trades': bot['total_trades'],
-                    'win_rate': bot['win_rate'],
-                    'max_drawdown': bot['max_drawdown'],
-                    'last_error': bot['last_error']
-                }
+                return self._row_to_bot_dict(bot)
             return None
-            
+
         except Exception as e:
-            
+
             logger.info(f"Błąd podczas pobierania bota: {e}")
             return None
     
@@ -642,7 +717,7 @@ class DatabaseManager:
         """Pobranie botów użytkownika"""
         try:
             conn = await self.get_connection()
-            
+
             if status:
                 cursor = await conn.execute('''
                     SELECT * FROM bots WHERE user_id = ? AND status = ?
@@ -653,35 +728,89 @@ class DatabaseManager:
                     SELECT * FROM bots WHERE user_id = ?
                     ORDER BY created_at DESC
                 ''', (user_id,))
-            
+
             bots = []
             async for bot in cursor:
-                bots.append({
-                    'id': bot['id'],
-                    'user_id': bot['user_id'],
-                    'name': bot['name'],
-                    'type': bot['type'],
-                    'exchange': bot['exchange'],
-                    'pair': bot['pair'],
-                    'parameters': json.loads(bot['parameters']),
-                    'status': bot['status'],
-                    'created_at': bot['created_at'],
-                    'started_at': bot['started_at'],
-                    'stopped_at': bot['stopped_at'],
-                    'total_profit': bot['total_profit'],
-                    'total_trades': bot['total_trades'],
-                    'win_rate': bot['win_rate'],
-                    'max_drawdown': bot['max_drawdown'],
-                    'last_error': bot['last_error']
-                })
-            
+                bots.append(self._row_to_bot_dict(bot))
+
             return bots
-            
+
         except Exception as e:
-            
+
             logger.info(f"Błąd podczas pobierania botów użytkownika: {e}")
             return []
-    
+
+    async def get_all_bots(self, user_id: Optional[int] = None) -> List[Dict]:
+        """Zwraca wszystkie boty w systemie (opcjonalnie filtrowane po użytkowniku)."""
+        try:
+            conn = await self.get_connection()
+
+            if user_id is not None:
+                cursor = await conn.execute('''
+                    SELECT * FROM bots WHERE user_id = ?
+                    ORDER BY created_at DESC
+                ''', (user_id,))
+            else:
+                cursor = await conn.execute('''
+                    SELECT * FROM bots
+                    ORDER BY created_at DESC
+                ''')
+
+            bots: List[Dict[str, Any]] = []
+            async for bot in cursor:
+                bots.append(self._row_to_bot_dict(bot))
+
+            return bots
+
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania listy botów: {e}")
+            return []
+
+    async def update_bot_config(self, bot_id: int, *, name: Optional[str] = None, bot_type: Optional[str] = None,
+                                exchange: Optional[str] = None, pair: Optional[str] = None,
+                                parameters: Optional[Dict] = None, status: Optional[str] = None) -> bool:
+        """Aktualizuje podstawowe dane bota w bazie danych."""
+        try:
+            conn = await self.get_connection()
+
+            updates: List[str] = []
+            params: List[Any] = []
+
+            if name is not None:
+                updates.append('name = ?')
+                params.append(name)
+            if bot_type is not None:
+                updates.append('type = ?')
+                params.append(bot_type)
+            if exchange is not None:
+                updates.append('exchange = ?')
+                params.append(exchange)
+            if pair is not None:
+                updates.append('pair = ?')
+                params.append(pair)
+            if parameters is not None:
+                updates.append('parameters = ?')
+                params.append(json.dumps(parameters))
+            if status is not None:
+                updates.append('status = ?')
+                params.append(status)
+
+            if not updates:
+                return True
+
+            params.append(bot_id)
+            query = 'UPDATE bots SET ' + ', '.join(updates) + ' WHERE id = ?'
+            await conn.execute(query, tuple(params))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.info(f"Błąd podczas aktualizacji konfiguracji bota {bot_id}: {e}")
+            return False
+
+    async def update_bot_parameters(self, bot_id: int, parameters: Dict) -> bool:
+        """Aktualizuje tylko parametry strategii bota."""
+        return await self.update_bot_config(bot_id, parameters=parameters)
+
     async def update_bot_status(self, bot_id: int, status: str, error_message: str = None):
         """Aktualizacja statusu bota"""
         try:
@@ -844,11 +973,164 @@ class DatabaseManager:
         except Exception as e:
             logger.info(f"Błąd podczas pobierania zleceń bota: {e}")
             return []
-    
+
+    async def get_first_user(self) -> Optional[Dict[str, Any]]:
+        """Zwraca pierwszego użytkownika (najniższe ID)."""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute('SELECT * FROM users ORDER BY id ASC LIMIT 1')
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_user_dict(row)
+            return None
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania pierwszego użytkownika: {e}")
+            return None
+
+    async def persist_strategy_state(self, bot_id: int, strategy_type: str, state: Dict[str, Any]) -> bool:
+        """Zapisuje stan strategii w bazie danych."""
+        try:
+            conn = await self.get_connection()
+            await conn.execute('''
+                INSERT INTO strategy_states (bot_id, strategy_type, state, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(bot_id) DO UPDATE SET
+                    strategy_type = excluded.strategy_type,
+                    state = excluded.state,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (bot_id, strategy_type, json.dumps(state)))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.info(f"Błąd podczas zapisywania stanu strategii: {e}")
+            return False
+
+    async def fetch_strategy_state(self, bot_id: int) -> Optional[Dict[str, Any]]:
+        """Pobiera ostatni stan strategii."""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute(
+                'SELECT strategy_type, state, updated_at FROM strategy_states WHERE bot_id = ?',
+                (bot_id,)
+            )
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            payload = {
+                'strategy_type': row['strategy_type'],
+                'updated_at': row['updated_at'],
+            }
+            try:
+                payload['state'] = json.loads(row['state']) if row['state'] else {}
+            except Exception:
+                payload['state'] = {}
+            return payload
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania stanu strategii: {e}")
+            return None
+
+    async def list_strategy_orders(self, bot_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        """Zwraca historię operacji strategii."""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute(
+                'SELECT order_id, payload, status, created_at, updated_at FROM strategy_orders WHERE bot_id = ? ORDER BY created_at DESC LIMIT ?',
+                (bot_id, limit)
+            )
+            results: List[Dict[str, Any]] = []
+            async for row in cursor:
+                record = dict(row)
+                try:
+                    record['payload'] = json.loads(record['payload']) if record['payload'] else {}
+                except Exception:
+                    record['payload'] = {}
+                results.append(record)
+            return results
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania historii strategii: {e}")
+            return []
+
+    async def upsert_strategy_order(self, bot_id: int, order_id: str, payload: Dict[str, Any], status: str) -> bool:
+        """Dodaje lub aktualizuje wpis operacji strategii."""
+        try:
+            conn = await self.get_connection()
+            await conn.execute('''
+                INSERT INTO strategy_orders (bot_id, order_id, payload, status, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(bot_id, order_id) DO UPDATE SET
+                    payload = excluded.payload,
+                    status = excluded.status,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (bot_id, order_id, json.dumps(payload), status))
+            await conn.commit()
+            return True
+        except Exception as e:
+            logger.info(f"Błąd podczas zapisywania operacji strategii: {e}")
+            return False
+
+    async def purge_strategy_orders(self, bot_id: int) -> None:
+        """Czyści historię operacji strategii."""
+        try:
+            conn = await self.get_connection()
+            await conn.execute('DELETE FROM strategy_orders WHERE bot_id = ?', (bot_id,))
+            await conn.commit()
+        except Exception as e:
+            logger.info(f"Błąd podczas czyszczenia historii strategii: {e}")
+
+    async def list_notification_templates(self) -> List[Dict[str, Any]]:
+        """Zwraca wszystkie szablony powiadomień."""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute('SELECT * FROM notification_templates ORDER BY name ASC')
+            templates: List[Dict[str, Any]] = []
+            async for row in cursor:
+                template = dict(row)
+                if template.get('variables'):
+                    try:
+                        template['variables'] = json.loads(template['variables'])
+                    except Exception:
+                        template['variables'] = {}
+                else:
+                    template['variables'] = {}
+                templates.append(template)
+            return templates
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania listy szablonów: {e}")
+            return []
+
+    async def list_notification_stats(self, limit: int = 365) -> List[Dict[str, Any]]:
+        """Zwraca zapisane statystyki powiadomień."""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute(
+                'SELECT date, channel, notification_type, sent_count, failed_count, total_count FROM notification_stats ORDER BY date DESC LIMIT ?',
+                (limit,)
+            )
+            stats: List[Dict[str, Any]] = []
+            async for row in cursor:
+                stats.append(dict(row))
+            return stats
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania statystyk powiadomień: {e}")
+            return []
+
+    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Pobiera użytkownika na podstawie nazwy."""
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute('SELECT * FROM users WHERE username = ? LIMIT 1', (username,))
+            row = await cursor.fetchone()
+            if row:
+                return self._row_to_user_dict(row)
+            return None
+        except Exception as e:
+            logger.info(f"Błąd podczas pobierania użytkownika {username}: {e}")
+            return None
+
     # === OPERACJE NA LOGACH ===
-    
+
     async def add_log(self, message: str, log_type: str = 'info', level: str = 'info',
-                     bot_id: int = None, user_id: int = None, details: Dict = None):
+                      bot_id: int = None, user_id: int = None, details: Dict = None):
         """Dodanie wpisu do logów"""
         try:
             conn = await self.get_connection()
@@ -1023,7 +1305,7 @@ class DatabaseManager:
         """Ustawia konfigurację aplikacji"""
         try:
             conn = await self.get_connection()
-            
+
             await conn.execute(
                 'INSERT OR REPLACE INTO app_config (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
                 (key, value)
@@ -1035,18 +1317,169 @@ class DatabaseManager:
                 await conn.execute('ROLLBACK')
             except Exception:
                 pass
-            logger.info(f"Błąd podczas aktualizacji constraints tabeli positions: {e}")
+            logger.info(f"Błąd podczas zapisywania konfiguracji aplikacji: {e}")
             return False
-        except Exception as e:
+
+    # === SYSTEM FAILSAFE / FAILOVER STATE ===
+
+    def _deserialize_failover_row(self, row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
+        if row is None:
+            return None
+
+        context: Dict[str, Any] = {}
+        if row["context"]:
             try:
-                await conn.execute('ROLLBACK')
+                context = json.loads(row["context"])
             except Exception:
-                pass
-            logger.info(f"Błąd podczas aktualizacji constraints tabeli positions: {e}")
-            return False
+                context = {}
+
+        def _parse_dt(value: Optional[str]) -> Optional[datetime]:
+            if not value:
+                return None
+            try:
+                return datetime.fromisoformat(value)
+            except Exception:
+                try:
+                    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    return None
+
+        return {
+            'id': row['id'],
+            'last_heartbeat': _parse_dt(row['last_heartbeat']),
+            'status': row['status'],
+            'active_bots': row['active_bots'],
+            'open_orders': row['open_orders'],
+            'context': context,
+            'clean_shutdown': bool(row['clean_shutdown']),
+            'updated_at': _parse_dt(row['updated_at']),
+            'created_at': _parse_dt(row['created_at']),
+        }
+
+    async def get_system_failover_state(self) -> Optional[Dict[str, Any]]:
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute('SELECT * FROM system_failover_state WHERE id = 1')
+            row = await cursor.fetchone()
+            return self._deserialize_failover_row(row)
         except Exception as e:
-            logger.info(f"Błąd podczas ustawiania konfiguracji: {e}")
-            return False
+            logger.info(f"Błąd podczas pobierania system_failover_state: {e}")
+            return None
+
+    async def upsert_system_failover_state(
+        self,
+        status: str,
+        active_bots: int,
+        open_orders: int,
+        context: Optional[Dict[str, Any]] = None,
+        clean_shutdown: bool = False,
+    ) -> Dict[str, Any]:
+        try:
+            conn = await self.get_connection()
+            await conn.execute(
+                '''
+                INSERT INTO system_failover_state (
+                    id, status, active_bots, open_orders, context, clean_shutdown,
+                    last_heartbeat, updated_at
+                ) VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    status = excluded.status,
+                    active_bots = excluded.active_bots,
+                    open_orders = excluded.open_orders,
+                    context = excluded.context,
+                    clean_shutdown = excluded.clean_shutdown,
+                    last_heartbeat = excluded.last_heartbeat,
+                    updated_at = excluded.updated_at
+                ''',
+                (
+                    status,
+                    int(active_bots),
+                    int(open_orders),
+                    json.dumps(context or {}),
+                    1 if clean_shutdown else 0,
+                ),
+            )
+            await conn.commit()
+        except Exception as e:
+            logger.info(f"Błąd podczas zapisywania system_failover_state: {e}")
+
+        state = await self.get_system_failover_state() or {}
+        return state
+
+    async def mark_clean_shutdown(
+        self,
+        clean: bool,
+        status: Optional[str] = None,
+        context_override: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        current_state = await self.get_system_failover_state() or {}
+        new_status = status or ('stopped' if clean else current_state.get('status', 'running'))
+        context = context_override if context_override is not None else current_state.get('context', {})
+        active_bots = current_state.get('active_bots', 0)
+        open_orders = current_state.get('open_orders', 0)
+        return await self.upsert_system_failover_state(
+            status=new_status,
+            active_bots=0 if clean else active_bots,
+            open_orders=0 if clean else open_orders,
+            context=context,
+            clean_shutdown=clean,
+        )
+
+    async def record_system_failover_event(
+        self,
+        event_type: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Optional[int]:
+        try:
+            conn = await self.get_connection()
+            cursor = await conn.execute(
+                '''
+                INSERT INTO system_failover_events (event_type, details)
+                VALUES (?, ?)
+                ''',
+                (
+                    event_type,
+                    json.dumps(
+                        details or {},
+                        default=lambda obj: obj.isoformat() if isinstance(obj, datetime) else str(obj),
+                    ),
+                ),
+            )
+            await conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            logger.info(f"Błąd podczas zapisywania system_failover_events: {e}")
+            return None
+
+    async def get_trading_mode(self, user_id: Optional[int] = None) -> Optional[str]:
+        """Pobiera zapisany tryb handlowy."""
+        key = f"trading_mode:{user_id}" if user_id is not None else "trading_mode"
+        value = await self.get_app_config(key)
+        if value:
+            return str(value)
+        return None
+
+    async def set_trading_mode(self, mode: str, user_id: Optional[int] = None) -> bool:
+        """Zapisuje tryb handlowy w konfiguracji."""
+        key = f"trading_mode:{user_id}" if user_id is not None else "trading_mode"
+        return await self.set_app_config(key, mode)
+
+    async def get_risk_settings_config(self, user_id: Optional[int] = None) -> Dict[str, Any]:
+        """Pobiera ustawienia ryzyka (JSON)."""
+        key = f"risk_settings:{user_id}" if user_id is not None else "risk_settings"
+        raw_value = await self.get_app_config(key)
+        if not raw_value:
+            return {}
+        try:
+            return json.loads(raw_value)
+        except Exception:
+            logger.info("Nie można zdeserializować ustawień ryzyka - zwracam pusty słownik")
+            return {}
+
+    async def save_risk_settings_config(self, settings: Dict[str, Any], user_id: Optional[int] = None) -> bool:
+        """Zapisuje ustawienia ryzyka jako JSON."""
+        key = f"risk_settings:{user_id}" if user_id is not None else "risk_settings"
+        return await self.set_app_config(key, json.dumps(settings))
 
     # === OPERACJE NA ZARZĄDZANIU RYZYKIEM ===
     

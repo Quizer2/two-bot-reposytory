@@ -29,6 +29,7 @@ from .updated_risk_manager import get_updated_risk_manager, UpdatedRiskManager
 from .portfolio_manager import get_portfolio_manager, PortfolioManager
 from .market_data_manager import get_market_data_manager, MarketDataManager
 from .trading_engine import get_trading_engine, TradingEngine
+from .failsafe_manager import FailSafeManager
 
 # Import starych komponentów (dla kompatybilności)
 from utils.config_manager import get_config_manager
@@ -62,6 +63,7 @@ class UpdatedApplicationInitializer(QThread):
         self.db_manager = None
         self.encryption_manager = None
         self.notification_manager = None
+        self.fail_safe_manager: Optional[FailSafeManager] = None
         
         # Status inicjalizacji
         self.initialization_status: Dict[str, bool] = {}
@@ -192,13 +194,40 @@ class UpdatedApplicationInitializer(QThread):
                 # Zarejestruj managery w IntegratedDataManager
                 if self.portfolio_manager:
                     self.integrated_data_manager.portfolio_manager = self.portfolio_manager
-                
+
                 if self.market_data_manager:
                     self.integrated_data_manager.market_data_manager = self.market_data_manager
-                
+
                 if self.trading_engine:
                     self.integrated_data_manager.trading_engine = self.trading_engine
-                
+
+                # Fail-safe manager musi znać referencje do głównych komponentów
+                if self.db_manager and self.updated_bot_manager:
+                    try:
+                        self.fail_safe_manager = FailSafeManager(
+                            database_manager=self.db_manager,
+                            bot_manager=self.updated_bot_manager,
+                            trading_engine=self.trading_engine,
+                            notification_manager=self.notification_manager,
+                        )
+                        self.integrated_data_manager.fail_safe_manager = self.fail_safe_manager
+                        success = await self.fail_safe_manager.initialize()
+                        self.initialization_status['FailSafeManager'] = success
+                        message = "" if success else "Failed to initialize"
+                        self.component_initialized.emit('FailSafeManager', success, message)
+                        if not success:
+                            self.initialization_errors['FailSafeManager'] = message
+                    except Exception as exc:
+                        self.fail_safe_manager = None
+                        error_msg = f"FailSafeManager init failed: {exc}"
+                        self.initialization_status['FailSafeManager'] = False
+                        self.initialization_errors['FailSafeManager'] = error_msg
+                        self.component_initialized.emit('FailSafeManager', False, error_msg)
+                        logger.warning(error_msg)
+                else:
+                    self.initialization_status['FailSafeManager'] = True
+                    self.component_initialized.emit('FailSafeManager', True, 'Skipped (missing dependencies)')
+
                 # Uruchom pętle aktualizacji danych
                 await self.integrated_data_manager.start_data_loops()
             
@@ -420,7 +449,8 @@ class UpdatedApplicationInitializer(QThread):
             "portfolio_manager": self.portfolio_manager,
             "market_data_manager": self.market_data_manager,
             "trading_engine": self.trading_engine,
-            
+            "fail_safe_manager": self.fail_safe_manager,
+
             # Stare komponenty
             "config_manager": self.config_manager,
             "db_manager": self.db_manager,

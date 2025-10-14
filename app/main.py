@@ -23,6 +23,11 @@ project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(current_dir))
 
+# Prefer Qt's software renderer to avoid hard dependency on system OpenGL libs
+os.environ.setdefault("QT_OPENGL", "software")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
+os.environ.setdefault("QT_XCB_FORCE_SOFTWARE_OPENGL", "1")
+
 # Import PyQt6
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox, QSplashScreen
@@ -48,6 +53,7 @@ from notifications import NotificationManager
 # Import UI
 from ui.updated_main_window import UpdatedMainWindow
 from core.updated_app_initializer import UpdatedApplicationInitializer
+from utils.qt_software_backend import enable_software_rendering
 import ast
 import logging
 logger = logging.getLogger(__name__)
@@ -68,6 +74,7 @@ class CryptoBotApplication:
         self.risk_manager = None
         self.notification_manager = None
         self.encryption_manager = None
+        self.fail_safe_manager = None
         
         # Flagi stanu
         self.is_initialized = False
@@ -76,6 +83,7 @@ class CryptoBotApplication:
     def setup_application(self):
         """Konfiguruje aplikację PyQt"""
         # Tworzenie aplikacji
+        enable_software_rendering()
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("CryptoBotDesktop")
         self.app.setApplicationVersion("1.0.0")
@@ -168,9 +176,11 @@ class CryptoBotApplication:
                 self.integrated_data_manager = getattr(self.initializer, 'integrated_data_manager', None)
                 # Zachowaj kompatybilność ze starymi komponentami
                 self.db_manager = getattr(self.initializer, 'db_manager', None)
+                self.bot_manager = getattr(self.initializer, 'updated_bot_manager', None)
                 self.risk_manager = getattr(self.initializer, 'updated_risk_manager', None)
                 self.notification_manager = getattr(self.initializer, 'notification_manager', None)
                 self.encryption_manager = getattr(self.initializer, 'encryption_manager', None)
+                self.fail_safe_manager = getattr(self.initializer, 'fail_safe_manager', None)
             self.show_main_window()
         else:
             self.show_initialization_error(error_message)
@@ -309,24 +319,27 @@ class CryptoBotApplication:
         """Asynchroniczne czyszczenie zasobów"""
         try:
             # Zatrzymaj wszystkie boty
-            if hasattr(self, 'bot_manager') and self.bot_manager:
+            if hasattr(self, 'bot_manager') and self.bot_manager and hasattr(self.bot_manager, 'shutdown'):
                 await self.bot_manager.shutdown()
-            
+
             # Zatrzymaj pętle IntegratedDataManager i jego aktywności
             if hasattr(self, 'integrated_data_manager') and self.integrated_data_manager:
                 try:
                     await self.integrated_data_manager.shutdown()
                 except Exception as e:
                     logger.warning(f"Error shutting down IntegratedDataManager: {e}")
-            
+
             # Zatrzymaj zarządzanie ryzykiem
             if hasattr(self, 'risk_manager') and self.risk_manager:
                 await self.risk_manager.stop_monitoring()
-            
+
             # Zatrzymaj system powiadomień
             if hasattr(self, 'notification_manager') and self.notification_manager:
                 await self.notification_manager.shutdown()
-            
+
+            if self.fail_safe_manager:
+                await self.fail_safe_manager.mark_clean_shutdown()
+
             # Zamknij połączenia z bazą danych
             if hasattr(self, 'db_manager') and self.db_manager:
                 await self.db_manager.close()

@@ -117,6 +117,54 @@ class NotificationStats:
     last_hour: int = 0
 
 
+DEFAULT_CHANNEL_CONFIGS: Dict[NotificationChannel, NotificationConfig] = {
+    NotificationChannel.DESKTOP: NotificationConfig(
+        channel=NotificationChannel.DESKTOP,
+        enabled=True,
+        settings={}
+    ),
+    NotificationChannel.EMAIL: NotificationConfig(
+        channel=NotificationChannel.EMAIL,
+        enabled=False,
+        settings={"recipients": []},
+        retry_attempts=3,
+        retry_delay=10
+    ),
+    NotificationChannel.TELEGRAM: NotificationConfig(
+        channel=NotificationChannel.TELEGRAM,
+        enabled=False,
+        settings={"bot_token": "", "chat_id": ""}
+    ),
+}
+
+DEFAULT_NOTIFICATION_TEMPLATES: List[NotificationTemplate] = [
+    NotificationTemplate(
+        name="critical_alert",
+        title="Krytyczny alert systemowy",
+        message="Wykryto krytyczny alert: {{message}}",
+        notification_type=NotificationType.CRITICAL,
+        channels=[NotificationChannel.DESKTOP, NotificationChannel.EMAIL],
+        priority=NotificationPriority.URGENT,
+        variables={"message": "Treść alertu"}
+    ),
+    NotificationTemplate(
+        name="trade_fill",
+        title="Zlecenie zrealizowane",
+        message="Bot {{bot_name}} zrealizował zlecenie {{side}} {{amount}} {{symbol}} po cenie {{price}}",
+        notification_type=NotificationType.TRADE,
+        channels=[NotificationChannel.DESKTOP],
+        priority=NotificationPriority.NORMAL,
+        variables={
+            "bot_name": "Nazwa bota",
+            "side": "Kierunek",
+            "amount": "Wolumen",
+            "symbol": "Para",
+            "price": "Cena"
+        }
+    ),
+]
+
+
 class NotificationManager:
     """Zaawansowany manager powiadomień"""
     
@@ -896,75 +944,281 @@ _{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_
     async def load_configurations(self):
         """Ładowanie konfiguracji z bazy danych"""
         try:
-            # TODO: Implementacja ładowania z bazy danych
-            pass
-            
+            if self.db is None:
+                self.channel_configs = dict(DEFAULT_CHANNEL_CONFIGS)
+                return
+
+            user = await self.db.get_first_user()
+            user_id = user['id'] if user else None
+            configs = await self.db.get_notification_configs(user_id=user_id) if user_id else []
+
+            if not configs:
+                self.channel_configs = dict(DEFAULT_CHANNEL_CONFIGS)
+                # Zapisz domyślne ustawienia jeśli mamy użytkownika
+                if user_id:
+                    for config in self.channel_configs.values():
+                        await self._save_channel_config(config)
+                return
+
+            self.channel_configs.clear()
+            for entry in configs:
+                try:
+                    channel = NotificationChannel(entry['channel'])
+                except ValueError:
+                    self.logger.warning(f"Nieznany kanał powiadomień: {entry['channel']}")
+                    continue
+                payload = dict(entry.get('config_data') or {})
+                retry_attempts = int(payload.pop('retry_attempts', entry.get('retry_attempts', 3)))
+                retry_delay = int(payload.pop('retry_delay', entry.get('retry_delay', 5)))
+                config = NotificationConfig(
+                    channel=channel,
+                    enabled=bool(entry.get('enabled', True)),
+                    settings=payload,
+                    rate_limit=entry.get('rate_limit_per_minute'),
+                    retry_attempts=retry_attempts,
+                    retry_delay=retry_delay,
+                )
+                self.channel_configs[channel] = config
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania konfiguracji: {e}")
-    
+
     async def load_templates(self):
         """Ładowanie szablonów z bazy danych"""
         try:
-            # TODO: Implementacja ładowania szablonów
-            pass
-            
+            if self.db is None:
+                self.templates = {tpl.name: tpl for tpl in DEFAULT_NOTIFICATION_TEMPLATES}
+                return
+
+            templates = await self.db.list_notification_templates()
+            if not templates:
+                self.templates = {tpl.name: tpl for tpl in DEFAULT_NOTIFICATION_TEMPLATES}
+                for template in self.templates.values():
+                    await self._save_template(template)
+                return
+
+            self.templates.clear()
+            for record in templates:
+                try:
+                    notif_type = NotificationType(record['notification_type'])
+                except ValueError:
+                    self.logger.warning(f"Nieznany typ powiadomienia: {record['notification_type']}")
+                    continue
+                variables = dict(record.get('variables') or {})
+                channels_raw = variables.pop('_channels', [])
+                priority_raw = variables.pop('_priority', NotificationPriority.NORMAL.value)
+                try:
+                    priority = NotificationPriority(priority_raw)
+                except ValueError:
+                    priority = NotificationPriority.NORMAL
+                channels: List[NotificationChannel] = []
+                for item in channels_raw:
+                    try:
+                        channels.append(NotificationChannel(item))
+                    except ValueError:
+                        self.logger.debug(f"Ignoruję kanał w szablonie ({item})")
+                if not channels:
+                    channels = [NotificationChannel.DESKTOP]
+
+                template = NotificationTemplate(
+                    name=record['name'],
+                    title=record.get('subject_template') or record['name'],
+                    message=record.get('message_template', ''),
+                    notification_type=notif_type,
+                    channels=channels,
+                    priority=priority,
+                    variables=variables,
+                )
+                self.templates[template.name] = template
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania szablonów: {e}")
-    
+
     async def load_history(self):
         """Ładowanie historii z bazy danych"""
         try:
-            # TODO: Implementacja ładowania historii
-            pass
-            
+            self.history = []
+            if self.db is None:
+                self._recalculate_stats_from_history()
+                return
+
+            records = await self.db.get_notification_history(limit=500)
+            for record in records:
+                metadata = record.get('metadata') or {}
+                channels_raw = metadata.get('channels') or []
+                channels: List[NotificationChannel] = []
+                if not channels_raw and record.get('channel'):
+                    channels_raw = [record['channel']]
+                for item in channels_raw:
+                    try:
+                        channels.append(NotificationChannel(item))
+                    except ValueError:
+                        self.logger.debug(f"Ignoruję kanał w historii ({item})")
+                if not channels:
+                    channels = [NotificationChannel.DESKTOP]
+
+                priority_raw = record.get('priority', NotificationPriority.NORMAL.value)
+                try:
+                    priority = NotificationPriority(priority_raw)
+                except ValueError:
+                    priority = NotificationPriority.NORMAL
+
+                timestamp_raw = record.get('created_at') or record.get('sent_at') or record.get('timestamp')
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_raw) if timestamp_raw else datetime.utcnow()
+                except Exception:
+                    timestamp = datetime.utcnow()
+
+                history_entry = NotificationHistory(
+                    id=record.get('notification_id', f"history_{len(self.history)}"),
+                    timestamp=timestamp,
+                    title=record.get('subject') or record.get('notification_type', 'notification'),
+                    message=record.get('message', ''),
+                    notification_type=NotificationType(record.get('notification_type', NotificationType.INFO.value)),
+                    channels=channels,
+                    priority=priority,
+                    status=record.get('status', 'pending'),
+                    error_message=record.get('error_message'),
+                    metadata=metadata,
+                )
+                self.history.append(history_entry)
+
+            self._recalculate_stats_from_history()
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania historii: {e}")
-    
+
     async def load_statistics(self):
         """Ładowanie statystyk z bazy danych"""
         try:
-            # TODO: Implementacja ładowania statystyk
-            pass
-            
+            if self.db is None:
+                return
+
+            aggregated = await self.db.list_notification_stats(limit=30)
+            if not aggregated:
+                return
+
+            total_sent = sum(row.get('sent_count', 0) for row in aggregated)
+            total_failed = sum(row.get('failed_count', 0) for row in aggregated)
+            self.stats.total_sent = max(self.stats.total_sent, total_sent)
+            self.stats.total_failed = max(self.stats.total_failed, total_failed)
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania statystyk: {e}")
-    
+
     async def save_statistics(self):
         """Zapisanie statystyk do bazy danych"""
         try:
-            # TODO: Implementacja zapisywania statystyk
-            pass
-            
+            if self.db is None:
+                return
+
+            today = datetime.utcnow().date().isoformat()
+            grouped: Dict[tuple[str, str], Dict[str, int]] = {}
+            for entry in self.history:
+                for channel in entry.channels:
+                    key = (channel.value, entry.notification_type.value)
+                    bucket = grouped.setdefault(key, {"sent": 0, "failed": 0})
+                    if entry.status == "sent":
+                        bucket["sent"] += 1
+                    elif entry.status == "failed":
+                        bucket["failed"] += 1
+
+            for (channel, notif_type), counts in grouped.items():
+                await self.db.update_notification_stats(
+                    today,
+                    channel,
+                    notif_type,
+                    counts.get("sent", 0),
+                    counts.get("failed", 0)
+                )
+
         except Exception as e:
             self.logger.error(f"Błąd zapisywania statystyk: {e}")
-    
+
     async def _save_channel_config(self, config: NotificationConfig):
         """Zapisanie konfiguracji kanału do bazy danych"""
         try:
-            # TODO: Implementacja zapisywania konfiguracji
-            pass
-            
+            if self.db is None:
+                return
+            user = await self.db.get_first_user()
+            if not user:
+                self.logger.debug("Brak użytkownika do zapisania konfiguracji kanałów")
+                return
+            payload = dict(config.settings or {})
+            payload['retry_attempts'] = config.retry_attempts
+            payload['retry_delay'] = config.retry_delay
+            await self.db.save_notification_config(
+                user_id=user['id'],
+                channel=config.channel.value,
+                config_data=payload,
+                enabled=config.enabled,
+                rate_limit=config.rate_limit or 0
+            )
+
         except Exception as e:
             self.logger.error(f"Błąd zapisywania konfiguracji kanału: {e}")
-    
+
     async def _save_template(self, template: NotificationTemplate):
         """Zapisanie szablonu do bazy danych"""
         try:
-            # TODO: Implementacja zapisywania szablonu
-            pass
-            
+            if self.db is None:
+                return
+            variables = dict(template.variables or {})
+            variables['_channels'] = [channel.value for channel in template.channels]
+            variables['_priority'] = template.priority.value
+            await self.db.save_notification_template(
+                name=template.name,
+                notification_type=template.notification_type.value,
+                message_template=template.message,
+                subject_template=template.title,
+                variables=variables
+            )
+
         except Exception as e:
             self.logger.error(f"Błąd zapisywania szablonu: {e}")
-    
+
     async def _save_notification_to_db(self, notification: NotificationHistory):
         """Zapisanie powiadomienia do bazy danych"""
         try:
-            # TODO: Implementacja zapisywania powiadomienia
-            pass
-            
+            if self.db is None:
+                return
+            metadata = dict(notification.metadata or {})
+            metadata.setdefault('channels', [channel.value for channel in notification.channels])
+            payload = {
+                'notification_id': notification.id,
+                'user_id': None,
+                'bot_id': metadata.get('bot_id'),
+                'notification_type': notification.notification_type.value,
+                'channel': notification.channels[0].value if notification.channels else NotificationChannel.DESKTOP.value,
+                'priority': notification.priority.value,
+                'subject': notification.title,
+                'message': notification.message,
+                'status': notification.status,
+                'metadata': metadata,
+            }
+            await self.db.save_notification_history(payload)
+
         except Exception as e:
             self.logger.error(f"Błąd zapisywania powiadomienia: {e}")
-    
+
+    def _recalculate_stats_from_history(self):
+        """Aktualizuje pamiętane statystyki na podstawie historii."""
+        stats = NotificationStats()
+        now = datetime.utcnow()
+        for entry in self.history:
+            if entry.status == "sent":
+                stats.total_sent += 1
+                stats.by_type[entry.notification_type.value] = stats.by_type.get(entry.notification_type.value, 0) + 1
+                for channel in entry.channels:
+                    stats.by_channel[channel.value] = stats.by_channel.get(channel.value, 0) + 1
+                if (now - entry.timestamp) <= timedelta(hours=1):
+                    stats.last_hour += 1
+                if (now - entry.timestamp) <= timedelta(hours=24):
+                    stats.last_24h += 1
+            elif entry.status == "failed":
+                stats.total_failed += 1
+        self.stats = stats
+
     async def shutdown(self):
         """Alias dla metody stop() - zamyka NotificationManager"""
         await self.stop()

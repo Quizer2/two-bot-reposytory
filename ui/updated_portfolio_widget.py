@@ -45,6 +45,14 @@ from utils.config_manager import get_config_manager, get_ui_setting, get_app_set
 from utils.logger import get_logger, LogType
 from utils.helpers import FormatHelper, CalculationHelper
 
+try:
+    from ui.styles import COLORS
+except ImportError:
+    COLORS = {
+        'success': '#4CAF50',
+        'danger': '#F44336'
+    }
+
 # Import UI components
 try:
     from ui.flow_layout import FlowLayout
@@ -64,6 +72,7 @@ class PortfolioSummaryCard(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("portfolioSummaryCard")
         self.setup_ui()
         self.apply_style()
     
@@ -106,33 +115,32 @@ class PortfolioSummaryCard(QWidget):
     def apply_style(self):
         """Zastosuj style do karty"""
         self.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                border-radius: 12px;
-                margin: 5px;
+            QWidget#portfolioSummaryCard {
+                background: #ffffff;
+                border: 1px solid rgba(29, 53, 87, 0.08);
+                border-radius: 18px;
+                margin: 4px 0;
+                padding: 4px;
+                box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
             }
             QLabel#summaryTitle {
                 font-size: 18px;
-                font-weight: bold;
-                color: #333333;
+                font-weight: 600;
+                color: #1f2a44;
             }
             QLabel#totalValue {
-                font-size: 24px;
-                font-weight: bold;
-                color: #2196F3;
+                font-size: 28px;
+                font-weight: 700;
+                color: #0f172a;
             }
-            QLabel#change24h {
-                font-size: 16px;
-                font-weight: 500;
-            }
-            QLabel#dailyPnL {
-                font-size: 16px;
-                font-weight: 500;
+            QLabel#change24h, QLabel#dailyPnL {
+                font-size: 15px;
+                font-weight: 600;
+                color: #64748b;
             }
             QLabel#assetsCount {
-                font-size: 14px;
-                color: #666666;
+                font-size: 13px;
+                color: #5f6c7b;
             }
         """)
     
@@ -146,7 +154,7 @@ class PortfolioSummaryCard(QWidget):
             # Zmiana 24h
             change_24h = portfolio_data.get('change_24h', 0.0)
             change_24h_percent = portfolio_data.get('change_24h_percent', 0.0)
-            change_color = "#4CAF50" if change_24h >= 0 else "#F44336"
+            change_color = COLORS.get('success', '#4CAF50') if change_24h >= 0 else COLORS.get('danger', '#F44336')
             change_sign = "+" if change_24h >= 0 else ""
             
             self.change_24h_label.setText(f"{change_sign}${change_24h:.2f} ({change_sign}{change_24h_percent:.2f}%)")
@@ -154,7 +162,7 @@ class PortfolioSummaryCard(QWidget):
             
             # Dzienny P&L
             daily_pnl = portfolio_data.get('daily_pnl', 0.0)
-            pnl_color = "#4CAF50" if daily_pnl >= 0 else "#F44336"
+            pnl_color = COLORS.get('success', '#4CAF50') if daily_pnl >= 0 else COLORS.get('danger', '#F44336')
             pnl_sign = "+" if daily_pnl >= 0 else ""
             
             self.daily_pnl_label.setText(f"{pnl_sign}${daily_pnl:.2f}")
@@ -172,6 +180,7 @@ class BalanceCard(QWidget):
     
     def __init__(self, symbol: str, balance_data: Dict[str, Any], parent=None):
         super().__init__(parent)
+        self.setObjectName("balanceCard")
         self.symbol = symbol
         self.balance_data = balance_data
         self.setup_ui()
@@ -209,33 +218,32 @@ class BalanceCard(QWidget):
     def apply_style(self):
         """Zastosuj style do karty"""
         self.setStyleSheet("""
-            QWidget {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                margin: 3px;
-            }
-            QWidget:hover {
-                border-color: #2196F3;
-                box-shadow: 0 2px 8px rgba(33, 150, 243, 0.3);
+            QWidget#balanceCard {
+                background: #ffffff;
+                border: 1px solid rgba(29, 53, 87, 0.08);
+                border-radius: 16px;
+                margin: 4px 0;
+                padding: 4px;
+                box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
             }
             QLabel#symbolLabel {
                 font-size: 16px;
-                font-weight: bold;
-                color: #333333;
+                font-weight: 600;
+                color: #1f2a44;
             }
             QLabel#balanceLabel {
-                font-size: 14px;
-                color: #666666;
+                font-size: 15px;
+                color: #0f172a;
+                font-weight: 600;
             }
             QLabel#usdValueLabel {
                 font-size: 14px;
-                font-weight: 500;
-                color: #2196F3;
+                font-weight: 600;
+                color: #2563eb;
             }
             QLabel#priceLabel {
                 font-size: 12px;
-                color: #999999;
+                color: #5f6c7b;
             }
         """)
     
@@ -262,38 +270,47 @@ class TransactionHistoryWidget(QWidget):
     def setup_ui(self):
         """Konfiguracja UI historii transakcji"""
         layout = QVBoxLayout(self)
-        
-        # Header
+
+        frame = QFrame()
+        frame.setObjectName("sectionCard")
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(24, 24, 24, 24)
+        frame_layout.setSpacing(18)
+
         header_layout = QHBoxLayout()
-        
-        title = QLabel("Historia Transakcji")
+
+        title = QLabel("Historia transakcji")
         title.setObjectName("sectionTitle")
         header_layout.addWidget(title)
-        
+
         header_layout.addStretch()
-        
-        # Filtry
+
         filter_combo = QComboBox()
         filter_combo.addItems(["Wszystkie", "Kupno", "Sprzedaż", "Ostatnie 24h", "Ostatni tydzień"])
         header_layout.addWidget(filter_combo)
-        
-        layout.addLayout(header_layout)
-        
-        # Tabela transakcji
+
+        frame_layout.addLayout(header_layout)
+
+        description = QLabel("Rejestrowane zdarzenia handlowe synchronizowane są z modułem transakcyjnym. Wybierz filtr, aby zawęzić listę.")
+        description.setObjectName("cardSubtitle")
+        description.setWordWrap(True)
+        frame_layout.addWidget(description)
+
         self.transactions_table = QTableWidget()
         self.transactions_table.setColumnCount(6)
         self.transactions_table.setHorizontalHeaderLabels([
             "Data", "Para", "Typ", "Ilość", "Cena", "Wartość"
         ])
-        
-        # Konfiguracja tabeli
+
         header = self.transactions_table.horizontalHeader()
         header.setStretchLastSection(True)
-        
+
         self.transactions_table.setAlternatingRowColors(True)
         self.transactions_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        
-        layout.addWidget(self.transactions_table)
+        self.transactions_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+
+        frame_layout.addWidget(self.transactions_table)
+        layout.addWidget(frame)
     
     def update_transactions(self, transactions: List[Dict[str, Any]]):
         """Aktualizuj listę transakcji"""
@@ -344,12 +361,24 @@ class PortfolioStatsWidget(QWidget):
     def setup_ui(self):
         """Konfiguracja UI statystyk"""
         layout = QVBoxLayout(self)
-        
-        # Placeholder
+
+        frame = QFrame()
+        frame.setObjectName("sectionCard")
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(24, 24, 24, 24)
+        frame_layout.setSpacing(12)
+
+        title = QLabel("Zaawansowane statystyki")
+        title.setObjectName("sectionTitle")
+        frame_layout.addWidget(title)
+
         placeholder = QLabel("Statystyki portfela będą tutaj")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder.setObjectName("placeholderText")
-        layout.addWidget(placeholder)
+        placeholder.setStyleSheet("color: #5f6c7b; font-style: italic;")
+        frame_layout.addWidget(placeholder)
+
+        layout.addWidget(frame)
 
 class UpdatedPortfolioWidget(QWidget):
     """
@@ -387,77 +416,121 @@ class UpdatedPortfolioWidget(QWidget):
     def setup_ui(self):
         """Konfiguracja interfejsu"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(20, 20, 20, 20)
-        
-        # Header
-        header_layout = QHBoxLayout()
-        
-        title = QLabel("Portfel")
+        layout.setSpacing(18)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        header_frame = QFrame()
+        header_frame.setObjectName("sectionCard")
+        header_layout = QHBoxLayout(header_frame)
+        header_layout.setContentsMargins(24, 24, 24, 24)
+        header_layout.setSpacing(16)
+
+        header_texts = QVBoxLayout()
+        title = QLabel("Stan portfela")
         title.setObjectName("pageTitle")
-        header_layout.addWidget(title)
-        
-        header_layout.addStretch()
-        
-        # Przyciski akcji
+        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1f2a44;")
+        header_texts.addWidget(title)
+
+        subtitle = QLabel("Kontroluj wyceny aktywów, historię transakcji oraz agregowane statystyki w jednym miejscu.")
+        subtitle.setObjectName("cardSubtitle")
+        subtitle.setWordWrap(True)
+        header_texts.addWidget(subtitle)
+        header_texts.addStretch()
+        header_layout.addLayout(header_texts, stretch=3)
+
+        actions_layout = QVBoxLayout()
+        actions_layout.setSpacing(10)
+
         refresh_btn = QPushButton("🔄 Odśwież")
-        refresh_btn.setObjectName("actionButton")
+        refresh_btn.setObjectName("inlineAction")
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.clicked.connect(self.refresh_data)
-        header_layout.addWidget(refresh_btn)
-        
+        actions_layout.addWidget(refresh_btn)
+
         export_btn = QPushButton("📊 Eksportuj")
-        export_btn.setObjectName("actionButton")
+        export_btn.setObjectName("inlineAction")
+        export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         export_btn.clicked.connect(self.export_portfolio)
-        header_layout.addWidget(export_btn)
-        
-        layout.addLayout(header_layout)
-        
+        actions_layout.addWidget(export_btn)
+        actions_layout.addStretch()
+
+        header_layout.addLayout(actions_layout, stretch=1)
+
+        layout.addWidget(header_frame)
+
+        content_scroll = QScrollArea()
+        content_scroll.setWidgetResizable(True)
+        content_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        try:
+            content_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        except Exception:
+            pass
+
+        content_widget = QWidget()
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setSpacing(24)
+        content_layout.setContentsMargins(4, 4, 4, 24)
+
         # Podsumowanie portfela
         self.portfolio_summary_card = PortfolioSummaryCard()
-        layout.addWidget(self.portfolio_summary_card)
-        
+        content_layout.addWidget(self.portfolio_summary_card)
+
         # Tabs dla różnych widoków
         self.tabs = QTabWidget()
-        
+
         # Tab: Salda
         self.setup_balances_tab()
         self.tabs.addTab(self.balances_widget, "Salda")
-        
+
         # Tab: Historia transakcji
         self.transaction_history = TransactionHistoryWidget()
         self.tabs.addTab(self.transaction_history, "Historia Transakcji")
-        
+
         # Tab: Statystyki
         self.portfolio_stats = PortfolioStatsWidget()
         self.tabs.addTab(self.portfolio_stats, "Statystyki")
-        
-        layout.addWidget(self.tabs)
+
+        content_layout.addWidget(self.tabs)
+        content_layout.addStretch()
+        content_scroll.setWidget(content_widget)
+        layout.addWidget(content_scroll)
     
     def setup_balances_tab(self):
         """Konfiguracja zakładki sald"""
         self.balances_widget = QWidget()
         layout = QVBoxLayout(self.balances_widget)
-        
-        # Header sald
-        balances_header = QLabel("Salda Kryptowalut")
+
+        balances_frame = QFrame()
+        balances_frame.setObjectName("sectionCard")
+        balances_layout = QVBoxLayout(balances_frame)
+        balances_layout.setContentsMargins(24, 24, 24, 24)
+        balances_layout.setSpacing(18)
+
+        balances_header = QLabel("Salda kryptowalut")
         balances_header.setObjectName("sectionTitle")
-        layout.addWidget(balances_header)
-        
-        # Scroll area dla kart sald
+        balances_layout.addWidget(balances_header)
+
+        balances_description = QLabel("Poniższe karty pobierane są z aktualnego stanu konta. Dane są synchronizowane z IntegratedDataManager.")
+        balances_description.setObjectName("cardSubtitle")
+        balances_description.setWordWrap(True)
+        balances_layout.addWidget(balances_description)
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
-        # Widget zawierający karty
+
         self.balances_container = QWidget()
-        
+
         if FLOW_LAYOUT_AVAILABLE:
             self.balances_layout = FlowLayout(self.balances_container)
         else:
             self.balances_layout = QGridLayout(self.balances_container)
-        
+
         scroll_area.setWidget(self.balances_container)
-        layout.addWidget(scroll_area)
+        balances_layout.addWidget(scroll_area)
+
+        layout.addWidget(balances_frame)
     
     def setup_data_callbacks(self):
         """Konfiguracja callbacków dla aktualizacji danych"""
@@ -639,58 +712,60 @@ class UpdatedPortfolioWidget(QWidget):
     
     def apply_theme(self):
         """Zastosuj motyw"""
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #f5f5f5;
-            }
-            QLabel#pageTitle {
-                font-size: 24px;
-                font-weight: bold;
-                color: #333333;
-                margin-bottom: 10px;
-            }
-            QLabel#sectionTitle {
-                font-size: 18px;
-                font-weight: 600;
-                color: #444444;
-                margin: 10px 0;
-            }
-            QPushButton#actionButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-            }
-            QPushButton#actionButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton#actionButton:pressed {
-                background-color: #1565C0;
-            }
-            QLabel#placeholderText {
-                color: #999999;
-                font-size: 16px;
-                padding: 40px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                background-color: white;
-            }
-            QTabBar::tab {
-                background-color: #f0f0f0;
-                padding: 8px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-            }
-            QTabBar::tab:selected {
-                background-color: white;
-                border-bottom: 2px solid #2196F3;
-            }
-        """)
+        try:
+            from ui.styles import get_theme_style
+            self.setStyleSheet(get_theme_style(dark_mode=False))
+        except Exception:
+            self.setStyleSheet("""
+                QWidget {
+                    background-color: #f4f6fb;
+                }
+                QLabel#pageTitle {
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #1f2a44;
+                    margin-bottom: 10px;
+                }
+                QLabel#sectionTitle {
+                    font-size: 18px;
+                    font-weight: 600;
+                    color: #1f2a44;
+                    margin: 10px 0;
+                }
+                QPushButton#inlineAction, QPushButton#actionButton {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #667eea, stop:1 #764ba2);
+                    color: white;
+                    border: none;
+                    border-radius: 10px;
+                    padding: 10px 20px;
+                    font-weight: 600;
+                }
+                QLabel#placeholderText {
+                    color: #5f6c7b;
+                    font-size: 16px;
+                    padding: 40px;
+                }
+                QTabWidget::pane {
+                    border: 1px solid rgba(15, 23, 42, 0.08);
+                    border-radius: 12px;
+                    background-color: white;
+                }
+                QTabBar::tab {
+                    background-color: #e9ecfb;
+                    padding: 10px 18px;
+                    margin-right: 2px;
+                    border-top-left-radius: 10px;
+                    border-top-right-radius: 10px;
+                    color: #465165;
+                }
+                QTabBar::tab:selected {
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #667eea, stop:1 #764ba2);
+                    color: white;
+                    font-weight: 600;
+                }
+            """)
     
     def start_refresh_timer(self):
         """Uruchom timer odświeżania"""

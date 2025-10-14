@@ -1,0 +1,7 @@
+{
+  "sentry": {
+    "dsn": "https://example@sentry.io/42",
+    "environment": "production",
+    "release": "2025.10.16"
+  }
+}
