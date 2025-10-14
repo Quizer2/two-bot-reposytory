@@ -28,6 +28,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.logger import get_logger, LogType
 from utils.config_manager import get_config_manager, get_app_setting
+from ui.async_helper import get_async_manager
 from core.data_manager import get_data_manager
 
 logger = get_logger(__name__)
@@ -375,7 +376,11 @@ class AnalysisWidget(QWidget):
             from ui.charts import create_chart_widget
             self.performance_chart = create_chart_widget("performance")
             performance_layout.addWidget(self.performance_chart)
-        except ImportError as e:
+        except Exception as e:
+            try:
+                logger.error(f"Błąd ładowania wykresu wydajności: {e}")
+            except Exception:
+                pass
             self.performance_chart = QLabel("📈 Błąd ładowania wykresu wydajności")
             self.performance_chart.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.performance_chart.setMinimumHeight(300)
@@ -483,65 +488,63 @@ class AnalysisWidget(QWidget):
         return tab
     
     def load_analysis_data(self):
-        """Załaduj dane analizy"""
+        """Załaduj dane analizy bez blokowania wątku UI"""
         try:
-            # Pobierz prawdziwe dane z trading managera
             self.sample_bots_data = []
-            
-            # Pobierz dane botów z bazy danych lub z IntegratedDataManager
-            import asyncio
-            try:
-                # Pobierz dane botów bezpiecznie względem stanu pętli
+            async_manager = get_async_manager()
+
+            # 1) Asynchroniczne pobranie danych botów
+            bots_task_id = async_manager.run_async(self.get_real_bots_data())
+
+            def _on_bots_finished(tid, result):
+                if tid != bots_task_id:
+                    return
                 try:
-                    asyncio.get_running_loop()
-                    import concurrent.futures
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, self.get_real_bots_data())
-                        try:
-                            bot_data = future.result(timeout=4)
-                        except concurrent.futures.TimeoutError:
-                            logger.warning("Timeout fetching bots data")
-                            bot_data = []
-                        if bot_data:
-                            self.sample_bots_data = bot_data
-                        else:
-                            # Jeśli brak danych, a trading_manager dostępny, pokaż informację o trybie
-                            mode_text = None
-                            mode_color = None
-                            stats = {}
-                            if hasattr(self, 'trading_manager') and self.trading_manager:
+                    # Odłącz slot po obsłudze, by uniknąć duplikacji
+                    try:
+                        async_manager.task_finished.disconnect(_on_bots_finished)
+                    except Exception:
+                        pass
+
+                    bot_data = result or []
+                    if bot_data:
+                        self.sample_bots_data = bot_data
+                        self.update_overview_metrics()
+                        self.populate_bots_analysis()
+                        self.populate_strategies_analysis()
+                        self.update_risk_metrics()
+                        return
+
+                    # 2) Fallback do statystyk trybu (paper/live)
+                    if hasattr(self, 'trading_manager') and self.trading_manager:
+                        async def _fetch_stats():
+                            try:
+                                if self.trading_manager.is_paper_mode():
+                                    stats = await self.trading_manager.get_paper_statistics()
+                                    return stats, "Paper Trading", "#4CAF50"
+                                stats = await self.trading_manager.get_live_statistics()
+                                return stats, "Live Trading", "#FF5722"
+                            except Exception as exc:
+                                logger.warning(f"Error fetching trading stats: {exc}")
+                                return None
+
+                        stats_task_id = async_manager.run_async(_fetch_stats())
+
+                        def _on_stats_finished(stid, sresult):
+                            if stid != stats_task_id:
+                                return
+                            try:
                                 try:
-                                    asyncio.get_running_loop()
-                                    import concurrent.futures
-                                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                                        if self.trading_manager.is_paper_mode():
-                                            future = executor.submit(asyncio.run, self.trading_manager.get_paper_statistics())
-                                            try:
-                                                stats = future.result(timeout=4)
-                                            except concurrent.futures.TimeoutError:
-                                                logger.warning("Timeout fetching paper statistics")
-                                                stats = {}
-                                            mode_text = "Paper Trading"
-                                            mode_color = "#4CAF50"
-                                        else:
-                                            future = executor.submit(asyncio.run, self.trading_manager.get_live_statistics())
-                                            try:
-                                                stats = future.result(timeout=4)
-                                            except concurrent.futures.TimeoutError:
-                                                logger.warning("Timeout fetching live statistics")
-                                                stats = {}
-                                            mode_text = "Live Trading"
-                                            mode_color = "#FF5722"
-                                except RuntimeError:
-                                    if self.trading_manager.is_paper_mode():
-                                        stats = asyncio.run(self.trading_manager.get_paper_statistics())
-                                        mode_text = "Paper Trading"
-                                        mode_color = "#4CAF50"
-                                    else:
-                                        stats = asyncio.run(self.trading_manager.get_live_statistics())
-                                        mode_text = "Live Trading"
-                                        mode_color = "#FF5722"
-                            if mode_text:
+                                    async_manager.task_finished.disconnect(_on_stats_finished)
+                                except Exception:
+                                    pass
+                                if not sresult:
+                                    self.update_overview_metrics()
+                                    self.populate_bots_analysis()
+                                    self.populate_strategies_analysis()
+                                    self.update_risk_metrics()
+                                    return
+                                stats, mode_text, mode_color = sresult
                                 self.sample_bots_data = [{
                                     'name': f'System - {mode_text}',
                                     'status': 'Aktywny',
@@ -564,61 +567,32 @@ class AnalysisWidget(QWidget):
                                     'mode': mode_text,
                                     'mode_color': mode_color
                                 }]
-                except RuntimeError:
-                    # Brak działającej pętli asyncio, użyj asyncio.run
-                    bot_data = asyncio.run(self.get_real_bots_data())
-                    if bot_data:
-                        self.sample_bots_data = bot_data
-                    else:
-                        mode_text = None
-                        mode_color = None
-                        stats = {}
-                        if hasattr(self, 'trading_manager') and self.trading_manager:
-                            if self.trading_manager.is_paper_mode():
-                                stats = asyncio.run(self.trading_manager.get_paper_statistics())
-                                mode_text = "Paper Trading"
-                                mode_color = "#4CAF50"
-                            else:
-                                stats = asyncio.run(self.trading_manager.get_live_statistics())
-                                mode_text = "Live Trading"
-                                mode_color = "#FF5722"
-                        if mode_text:
-                            self.sample_bots_data = [{
-                                'name': f'System - {mode_text}',
-                                'status': 'Aktywny',
-                                'strategy': mode_text,
-                                'symbol': 'SYSTEM',
-                                'total_profit': stats.get('total_pnl', 0.0),
-                                'profit_percentage': stats.get('total_return', 0.0),
-                                'total_trades': stats.get('trades_count', 0),
-                                'win_rate': 0.0,
-                                'max_drawdown': 0.0,
-                                'sharpe_ratio': 0.0,
-                                'initial_capital': stats.get('initial_balance', 10000.0),
-                                'current_capital': stats.get('total_value', 10000.0),
-                                'avg_profit_per_trade': 0.0,
-                                'avg_loss_per_trade': 0.0,
-                                'longest_win_streak': 0,
-                                'longest_loss_streak': 0,
-                                'runtime': 'Aktywny',
-                                'last_trade_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                'mode': mode_text,
-                                'mode_color': mode_color
-                            }]
-            except Exception as e:
-                logger.error(f"Błąd pobierania danych analizy: {e}")
-                # Pozostaw self.sample_bots_data pustą, poniżej ustawimy komunikat fallback
+                                self.update_overview_metrics()
+                                self.populate_bots_analysis()
+                                self.populate_strategies_analysis()
+                                self.update_risk_metrics()
+                            except Exception as exc2:
+                                logger.error(f"Error applying trading stats: {exc2}")
+                                self.update_overview_metrics()
+                                self.populate_bots_analysis()
+                                self.populate_strategies_analysis()
+                                self.update_risk_metrics()
 
-            
-            # Jeśli brak danych, pozostaw pustą listę – UI pokaże stan pusty
-            # (nie generujemy przykładowych botów ani wpisów systemowych)
-            
-            self.update_overview_metrics()
-            self.populate_bots_analysis()
-            self.populate_strategies_analysis()
-            # Aktualizuj metryki ryzyka
-            self.update_risk_metrics()
-            
+                        async_manager.task_finished.connect(_on_stats_finished)
+                    else:
+                        self.update_overview_metrics()
+                        self.populate_bots_analysis()
+                        self.populate_strategies_analysis()
+                        self.update_risk_metrics()
+                except Exception as e:
+                    logger.error(f"Błąd przetwarzania danych analizy: {e}")
+                    self.update_overview_metrics()
+                    self.populate_bots_analysis()
+                    self.populate_strategies_analysis()
+                    self.update_risk_metrics()
+
+            async_manager.task_finished.connect(_on_bots_finished)
+
         except Exception as e:
             logger.error(f"Błąd podczas ładowania danych analizy: {e}")
     
@@ -716,9 +690,23 @@ class AnalysisWidget(QWidget):
     
     def populate_bots_analysis(self):
         """Wypełnij analizę botów"""
-        # Wyczyść poprzednie widgety
+        # Wyczyść poprzednie elementy bezpiecznie (widgety i spacery)
         for i in reversed(range(self.bots_layout.count())):
-            self.bots_layout.itemAt(i).widget().setParent(None)
+            item = self.bots_layout.itemAt(i)
+            try:
+                w = item.widget()
+            except Exception:
+                w = None
+            if w is not None:
+                try:
+                    w.setParent(None)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.bots_layout.removeItem(item)
+                except Exception:
+                    pass
         
         # Jeśli brak danych – pokaż przyjazny pusty stan
         if not self.sample_bots_data or len(self.sample_bots_data) == 0:
@@ -897,7 +885,11 @@ class AnalysisWidget(QWidget):
             from ui.charts import create_chart_widget
             candlestick_chart = create_chart_widget("candlestick", symbol="BTCUSDT")
             layout.addWidget(candlestick_chart)
-        except ImportError as e:
+        except Exception as e:
+            try:
+                logger.error(f"Błąd ładowania wykresów cenowych: {e}")
+            except Exception:
+                pass
             placeholder = QLabel("📈 Błąd ładowania wykresów cenowych")
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             placeholder.setMinimumHeight(400)

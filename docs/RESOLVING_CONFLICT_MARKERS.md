@@ -54,14 +54,4 @@ który zgłasza nierozwiązane konflikty przed wydaniem aplikacji.【F:PRODUCTIO
   ```bash
   python tools/check_distribution_readiness.py --json
   ```
-Raport JSON może zostać zarchiwizowany jako artefakt, blokując merge w razie wykrycia znaczników.
-
-## Przykład: `tools/check_runtime_dependencies.py`
-
-Jeżeli podczas mergowania zobaczysz konflikt w sekcji definiującej parametr `--env-file`, wybierz opcję **Accept incoming change**.
-To właśnie ta wersja korzysta z funkcji `_default_env_file_path()`, która centralizuje logikę wyboru pliku `.env` i eliminuje ręczne
-powielanie ścieżek w różnych gałęziach. Wersja oznaczona jako *current change* pozostawia starszą implementację opartą o
-bezpośrednie sprawdzanie `PRODUCTION_ENV_FILE.exists()`, co ponownie prowadzi do konfliktów przy kolejnych aktualizacjach.
-
-Po zaakceptowaniu właściwej wersji usuń znaczniki konfliktu i wykonaj `git add tools/check_runtime_dependencies.py` przed
-kontynuowaniem merge lub rebase.
+  Raport JSON może zostać zarchiwizowany jako artefakt, blokując merge w razie wykrycia znaczników.

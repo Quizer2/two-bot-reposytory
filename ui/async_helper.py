@@ -80,6 +80,40 @@ class AsyncWorker(QThread):
         except Exception:
             pass
 
+    def __del__(self):
+        """Zapewnia bezpieczne zatrzymanie wątku przy niszczeniu obiektu.
+        Chroni przed ostrzeżeniem: 'QThread: Destroyed while thread is still running'."""
+        try:
+            # Spróbuj łagodnego zatrzymania, bez blokowania wątku na samym sobie
+            try:
+                if hasattr(self, 'stop'):
+                    self.stop()
+            except Exception:
+                pass
+
+            # Nigdy nie wywołuj wait() z wnętrza tego samego wątku – powoduje freeze
+            try:
+                from PyQt6.QtCore import QThread
+                current = QThread.currentThread()
+                if current is not self:
+                    # Poczekaj krótko na zakończenie, tylko jeśli wywołane z innego wątku
+                    self.wait(500)
+            except Exception:
+                # Jeśli API niedostępne lub sprawdzenie się nie powiodło, nie blokuj
+                pass
+
+            # Ostatecznie spróbuj przerwać bez blokowania
+            try:
+                if self.isRunning():
+                    # Preferuj łagodne przerwanie; avoid terminate() gdy to możliwe
+                    if hasattr(self, 'requestInterruption'):
+                        self.requestInterruption()
+            except Exception:
+                pass
+        except Exception:
+            # Ostateczny bezpiecznik – nie propaguj wyjątku z destruktora
+            pass
+
 
 class AsyncManager(QObject):
     """Menedżer zadań asyncio dla PyQt"""
@@ -135,17 +169,25 @@ class AsyncManager(QObject):
                 # Najpierw spróbuj łagodnego zatrzymania
                 if hasattr(worker, 'stop'):
                     worker.stop()
-                # Poczekaj na zakończenie
-                worker.wait()
-                # Jeśli nadal działa, wymuś zakończenie
-                if worker.isRunning():
-                    worker.terminate()
-                    worker.wait()
+                from PyQt6.QtCore import QThread
+                # Unikaj oczekiwania na samego siebie, co powoduje komunikat 'QThread::wait: Thread tried to wait on itself'
+                current = QThread.currentThread()
+                if current is not worker:
+                    # Poczekaj na zakończenie
+                    worker.wait(500)
+                    # Jeśli nadal działa, wymuś zakończenie
+                    if worker.isRunning():
+                        worker.terminate()
+                        worker.wait(500)
+                else:
+                    # Jeżeli anulujemy z tego samego wątku, użyj przerwania bez blokowania
+                    if hasattr(worker, 'requestInterruption'):
+                        worker.requestInterruption()
             except Exception:
                 # W ostateczności wymuś zakończenie
                 try:
                     worker.terminate()
-                    worker.wait()
+                    # Nie wywołuj wait bez sprawdzenia kontekstu
                 except Exception:
                     pass
             finally:

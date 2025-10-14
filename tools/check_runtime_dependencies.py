@@ -33,17 +33,6 @@ PRODUCTION_ENV_FILE = Path("config/production.env")
 PRODUCTION_ENV_TEMPLATE = Path("config/production.env.example")
 
 
-def _default_env_file_path() -> str:
-    """Return the default production environment file path as a string.
-
-    Keeping this logic in one place avoids minor formatting differences from
-    triggering merge conflicts when branches touch the CLI argument definition.
-    """
-
-    candidate = PRODUCTION_ENV_FILE if PRODUCTION_ENV_FILE.exists() else PRODUCTION_ENV_TEMPLATE
-    return str(candidate)
-
-
 def check_modules() -> Dict[str, Dict[str, str]]:
     results: Dict[str, Dict[str, str]] = {}
     for module, install_hint in RUNTIME_MODULES.items():
@@ -159,16 +148,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--env-file",
-        default=_default_env_file_path(),
+        default=str(PRODUCTION_ENV_FILE if PRODUCTION_ENV_FILE.exists() else PRODUCTION_ENV_TEMPLATE),
         help="Ścieżka do pliku .env zawierającego konfigurację produkcyjną",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help=(
-            "Zachowano dla kompatybilności ze skryptami wydaniowymi. "
-            "Wyjście skryptu zawsze jest w formacie JSON."
-        ),
     )
     args = parser.parse_args()
 
