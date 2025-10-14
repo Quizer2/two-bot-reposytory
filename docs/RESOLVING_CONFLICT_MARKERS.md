@@ -3,11 +3,11 @@
 Podczas łączenia gałęzi Git może wstawić znaczniki konfliktów w plikach:
 
 ```
-<<<<<<< HEAD
+&lt;&lt;&lt;&lt;&lt;&lt;&lt; HEAD
 ...twoja wersja...
-=======
+&equals;&equals;&equals;&equals;&equals;&equals;&equals;
 ...wersja z gałęzi...
->>>>>>> feature
+&gt;&gt;&gt;&gt;&gt;&gt;&gt; feature
 ```
 
 Aby poprawnie dokończyć merge lub rebase, **nie usuwaj ich w ciemno**. Wybierz właściwą treść (możesz połączyć obie wersje), a następnie usuń wszystkie linie ze znacznikami. Po zapisaniu pliku uruchom:
@@ -39,3 +39,19 @@ python tools/check_distribution_readiness.py
 ```
 
 który zgłasza nierozwiązane konflikty przed wydaniem aplikacji.【F:PRODUCTION_GUIDE.md†L50-L60】
+
+## Automatyczne zabezpieczenia
+- Dodaj do `.pre-commit-config.yaml` wpis:
+  ```yaml
+  - repo: local
+    hooks:
+      - id: conflict-marker-scan
+        name: Conflict markers scan
+        entry: python tools/check_distribution_readiness.py
+        language: system
+  ```
+- W pipeline CI uruchom krok:
+  ```bash
+  python tools/check_distribution_readiness.py --json
+  ```
+  Raport JSON może zostać zarchiwizowany jako artefakt, blokując merge w razie wykrycia znaczników.

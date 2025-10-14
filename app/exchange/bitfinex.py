@@ -509,6 +509,7 @@ class BitfinexExchange(BaseExchange):
         else:
             raise Exception(f"Nieprawidłowy format odpowiedzi: {response}")
     
+    @net_guard('exchange:cancel_order')
     async def cancel_order(self, order_id: str, symbol: str = None) -> bool:
         """Anuluj zlecenie"""
         try:

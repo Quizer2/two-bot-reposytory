@@ -23,6 +23,11 @@ project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(current_dir))
 
+# Prefer Qt's software renderer to avoid hard dependency on system OpenGL libs
+os.environ.setdefault("QT_OPENGL", "software")
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
+os.environ.setdefault("QT_XCB_FORCE_SOFTWARE_OPENGL", "1")
+
 # Import PyQt6
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox, QSplashScreen
@@ -48,6 +53,7 @@ from notifications import NotificationManager
 # Import UI
 from ui.updated_main_window import UpdatedMainWindow
 from core.updated_app_initializer import UpdatedApplicationInitializer
+from utils.qt_software_backend import enable_software_rendering
 import ast
 import logging
 logger = logging.getLogger(__name__)
@@ -76,6 +82,7 @@ class CryptoBotApplication:
     def setup_application(self):
         """Konfiguruje aplikację PyQt"""
         # Tworzenie aplikacji
+        enable_software_rendering()
         self.app = QApplication(sys.argv)
         self.app.setApplicationName("CryptoBotDesktop")
         self.app.setApplicationVersion("1.0.0")
