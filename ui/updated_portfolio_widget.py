@@ -475,22 +475,38 @@ class UpdatedPortfolioWidget(QWidget):
     def on_portfolio_update(self, portfolio_data):
         """Callback dla aktualizacji danych portfela"""
         try:
-            self.portfolio_data = portfolio_data
-            self.portfolio_summary_card.update_data(portfolio_data)
-            
-            self.logger.info("Portfolio data updated from IntegratedDataManager")
-            
+            def _apply():
+                try:
+                    self.portfolio_data = portfolio_data
+                    self.portfolio_summary_card.update_data(portfolio_data)
+                    self.logger.info("Portfolio data updated from IntegratedDataManager")
+                except Exception as exc:
+                    self.logger.error(f"Error applying portfolio data: {exc}")
+
+            # Zapewnij wykonanie w głównym wątku UI
+            if PYQT_AVAILABLE and QThread.currentThread() != self.thread():
+                QTimer.singleShot(0, _apply)
+            else:
+                _apply()
         except Exception as e:
             self.logger.error(f"Error updating portfolio data: {e}")
     
     def on_balance_update(self, balance_data):
         """Callback dla aktualizacji sald"""
         try:
-            self.balances = balance_data
-            self.update_balance_cards()
-            
-            self.logger.info("Balance data updated from IntegratedDataManager")
-            
+            def _apply():
+                try:
+                    self.balances = balance_data
+                    self.update_balance_cards()
+                    self.logger.info("Balance data updated from IntegratedDataManager")
+                except Exception as exc:
+                    self.logger.error(f"Error applying balance data: {exc}")
+
+            # Zapewnij wykonanie w głównym wątku UI
+            if PYQT_AVAILABLE and QThread.currentThread() != self.thread():
+                QTimer.singleShot(0, _apply)
+            else:
+                _apply()
         except Exception as e:
             self.logger.error(f"Error updating balance data: {e}")
     
@@ -503,7 +519,6 @@ class UpdatedPortfolioWidget(QWidget):
                 if not ts:
                     time_str = tx.get('time')
                     if isinstance(time_str, str):
-                        # Combine today's date with provided time string
                         try:
                             today = datetime.now().date()
                             h, m, s = [int(part) for part in time_str.split(':')]
@@ -529,20 +544,24 @@ class UpdatedPortfolioWidget(QWidget):
                     'price': float(price) if isinstance(price, (int, float)) else 0.0,
                 }
 
-            if isinstance(transaction_data, list):
-                # Normalize list of transactions
-                self.transactions = [_normalize(tx) for tx in transaction_data]
+            def _apply():
+                try:
+                    if isinstance(transaction_data, list):
+                        self.transactions = [_normalize(tx) for tx in transaction_data]
+                    else:
+                        normalized = _normalize(transaction_data)
+                        self.transactions.insert(0, normalized)
+                        self.transactions = self.transactions[:100]
+                    self.transaction_history.update_transactions(self.transactions)
+                    self.logger.info("Transaction data updated from IntegratedDataManager")
+                except Exception as exc:
+                    self.logger.error(f"Error applying transaction data: {exc}")
+
+            # Zapewnij wykonanie w głównym wątku UI
+            if PYQT_AVAILABLE and QThread.currentThread() != self.thread():
+                QTimer.singleShot(0, _apply)
             else:
-                # Normalize single transaction and prepend
-                normalized = _normalize(transaction_data)
-                self.transactions.insert(0, normalized)
-                # Ogranicz do 100 ostatnich transakcji
-                self.transactions = self.transactions[:100]
-            
-            self.transaction_history.update_transactions(self.transactions)
-            
-            self.logger.info("Transaction data updated from IntegratedDataManager")
-            
+                _apply()
         except Exception as e:
             self.logger.error(f"Error updating transaction data: {e}")
     
@@ -639,56 +658,62 @@ class UpdatedPortfolioWidget(QWidget):
     
     def apply_theme(self):
         """Zastosuj motyw"""
+        # Ciemny, spójny motyw zgodny z globalnymi stylami
         self.setStyleSheet("""
             QWidget {
-                background-color: #f5f5f5;
+                background-color: #1a1a1a;
+                color: #eaeaea;
             }
             QLabel#pageTitle {
                 font-size: 24px;
                 font-weight: bold;
-                color: #333333;
+                color: #ffffff;
                 margin-bottom: 10px;
             }
             QLabel#sectionTitle {
                 font-size: 18px;
                 font-weight: 600;
-                color: #444444;
+                color: #e0e0e0;
                 margin: 10px 0;
             }
             QPushButton#actionButton {
-                background-color: #2196F3;
+                background-color: #667eea;
                 color: white;
                 border: none;
-                border-radius: 6px;
+                border-radius: 8px;
                 padding: 8px 16px;
-                font-weight: 500;
+                font-weight: 600;
             }
             QPushButton#actionButton:hover {
-                background-color: #1976D2;
+                background-color: #576bd6;
             }
             QPushButton#actionButton:pressed {
-                background-color: #1565C0;
+                background-color: #4a5bc0;
             }
             QLabel#placeholderText {
-                color: #999999;
+                color: #9aa0a6;
                 font-size: 16px;
                 padding: 40px;
             }
             QTabWidget::pane {
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                background-color: white;
+                border: 1px solid #3a3a3a;
+                border-radius: 10px;
+                background-color: #181818;
             }
             QTabBar::tab {
-                background-color: #f0f0f0;
-                padding: 8px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                background-color: #2b2b2b;
+                color: #e6e6e6;
+                padding: 10px 18px;
+                margin-right: 3px;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+                font-weight: 600;
             }
             QTabBar::tab:selected {
-                background-color: white;
-                border-bottom: 2px solid #2196F3;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #667eea, stop:1 #764ba2);
+                color: #ffffff;
+                border-bottom: 2px solid #667eea;
             }
         """)
     

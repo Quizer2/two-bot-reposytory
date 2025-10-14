@@ -19,7 +19,7 @@ try:
         QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox,
         QTextEdit, QProgressBar, QSplitter, QTreeWidget, QTreeWidgetItem,
         QMessageBox, QMenu, QFileDialog, QDateEdit, QApplication,
-        QDialog, QDialogButtonBox
+        QDialog, QDialogButtonBox, QAbstractItemView, QSizePolicy
     )
     from PyQt6.QtCore import (
         Qt, QTimer, pyqtSignal, QSize, QDate, QPropertyAnimation,
@@ -158,19 +158,19 @@ class BotCard(QWidget):
         """Zastosuj style do karty"""
         self.setStyleSheet("""
             QWidget {
-                background-color: #ffffff;
-                border: 1px solid #e0e0e0;
+                background-color: #1a1a1a;
+                border: 1px solid #2a2a2a;
                 border-radius: 12px;
                 margin: 5px;
+                color: #eaeaea;
             }
             QWidget:hover {
-                border-color: #2196F3;
-                box-shadow: 0 4px 12px rgba(33, 150, 243, 0.2);
+                border-color: #667eea;
             }
             QLabel#botName {
                 font-size: 16px;
                 font-weight: bold;
-                color: #333333;
+                color: #ffffff;
             }
             QLabel#statusIndicator {
                 font-size: 20px;
@@ -178,36 +178,36 @@ class BotCard(QWidget):
             }
             QLabel#infoLabel {
                 font-size: 12px;
-                color: #666666;
+                color: #c9c9c9;
                 font-weight: 500;
             }
             QLabel#infoValue {
                 font-size: 12px;
-                color: #333333;
+                color: #f0f0f0;
             }
             QLabel#pnlValue {
                 font-size: 12px;
                 font-weight: 600;
             }
             QPushButton#actionButton {
-                background-color: #2196F3;
+                background-color: #667eea;
                 color: white;
                 border: none;
-                border-radius: 6px;
+                border-radius: 8px;
                 padding: 6px 12px;
-                font-weight: 500;
+                font-weight: 600;
                 min-width: 60px;
             }
             QPushButton#actionButton:hover {
-                background-color: #1976D2;
+                background-color: #576bd6;
             }
             QPushButton#actionButton:pressed {
-                background-color: #1565C0;
+                background-color: #4a5bc0;
             }
             QPushButton#iconButton {
-                background-color: #f5f5f5;
-                border: 1px solid #ddd;
-                border-radius: 4px;
+                background-color: #2a2a2a;
+                border: 1px solid #3a3a3a;
+                border-radius: 6px;
                 padding: 4px;
                 min-width: 30px;
                 max-width: 30px;
@@ -215,7 +215,7 @@ class BotCard(QWidget):
                 max-height: 30px;
             }
             QPushButton#iconButton:hover {
-                background-color: #e0e0e0;
+                background-color: #3a3a3a;
             }
         """)
     
@@ -407,6 +407,10 @@ class UpdatedBotManagementWidget(QWidget):
         self.bots_data = {}
         self.bot_cards = {}
         self.ai_last_snapshot = None
+        # Throttling odświeżania
+        self._refresh_in_progress = False
+        self._last_refresh_time = None
+        self._refresh_min_interval = 1.0  # sekundy
 
         # Timer odświeżania
         self.refresh_timer = QTimer()
@@ -421,9 +425,18 @@ class UpdatedBotManagementWidget(QWidget):
     
     def setup_ui(self):
         """Konfiguracja interfejsu"""
+        # Główny layout z przewijaniem całej strony
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        page_widget = QWidget()
+        page_layout = QVBoxLayout(page_widget)
+        page_layout.setSpacing(20)
+        page_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
         header_layout = QHBoxLayout()
@@ -456,16 +469,21 @@ class UpdatedBotManagementWidget(QWidget):
         stop_all_btn.clicked.connect(self.stop_all_bots)
         header_layout.addWidget(stop_all_btn)
         
-        layout.addLayout(header_layout)
+        page_layout.addLayout(header_layout)
         
         # Statystyki
-        self.setup_stats_section(layout)
+        self.setup_stats_section(page_layout)
+        page_layout.addSpacing(12)
 
         # Panel danych AI
-        self.setup_ai_insights_section(layout)
+        self.setup_ai_insights_section(page_layout)
+        page_layout.addSpacing(12)
 
         # Boty
-        self.setup_bots_section(layout)
+        self.setup_bots_section(page_layout)
+
+        scroll_area.setWidget(page_widget)
+        layout.addWidget(scroll_area)
 
     def setup_stats_section(self, parent_layout):
         """Konfiguracja sekcji statystyk"""
@@ -500,8 +518,9 @@ class UpdatedBotManagementWidget(QWidget):
         ai_group = QGroupBox("Panel danych AI bota")
         ai_group.setObjectName("aiInsightsGroup")
         ai_layout = QVBoxLayout(ai_group)
-        ai_layout.setSpacing(10)
-        ai_layout.setContentsMargins(15, 15, 15, 15)
+        ai_layout.setSpacing(14)
+        ai_layout.setContentsMargins(18, 18, 18, 18)
+        ai_group.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         self.ai_status_label = QLabel("Oczekiwanie na dane AI ...")
         self.ai_status_label.setObjectName("aiStatusLabel")
@@ -518,9 +537,16 @@ class UpdatedBotManagementWidget(QWidget):
             "Wolumen 24h",
         ])
         self.ai_price_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_price_table.horizontalHeader().setStretchLastSection(True)
         self.ai_price_table.verticalHeader().setVisible(False)
         self.ai_price_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.ai_price_table.setAlternatingRowColors(True)
+        self.ai_price_table.verticalHeader().setDefaultSectionSize(30)
+        self.ai_price_table.setShowGrid(False)
+        self.ai_price_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.ai_price_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ai_layout.addWidget(self.ai_price_table)
+        ai_layout.addSpacing(10)
 
         self.ai_risk_table = QTableWidget(0, 6)
         self.ai_risk_table.setObjectName("aiRiskTable")
@@ -533,9 +559,16 @@ class UpdatedBotManagementWidget(QWidget):
             "Ekspozycja",
         ])
         self.ai_risk_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_risk_table.horizontalHeader().setStretchLastSection(True)
         self.ai_risk_table.verticalHeader().setVisible(False)
         self.ai_risk_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.ai_risk_table.setAlternatingRowColors(True)
+        self.ai_risk_table.verticalHeader().setDefaultSectionSize(30)
+        self.ai_risk_table.setShowGrid(False)
+        self.ai_risk_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.ai_risk_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ai_layout.addWidget(self.ai_risk_table)
+        ai_layout.addSpacing(10)
 
         self.ai_indicator_table = QTableWidget(0, 7)
         self.ai_indicator_table.setObjectName("aiIndicatorTable")
@@ -549,9 +582,16 @@ class UpdatedBotManagementWidget(QWidget):
             "Zmienność",
         ])
         self.ai_indicator_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_indicator_table.horizontalHeader().setStretchLastSection(True)
         self.ai_indicator_table.verticalHeader().setVisible(False)
         self.ai_indicator_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.ai_indicator_table.setAlternatingRowColors(True)
+        self.ai_indicator_table.verticalHeader().setDefaultSectionSize(30)
+        self.ai_indicator_table.setShowGrid(False)
+        self.ai_indicator_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.ai_indicator_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ai_layout.addWidget(self.ai_indicator_table)
+        ai_layout.addSpacing(10)
 
         self.ai_feature_table = QTableWidget(0, 9)
         self.ai_feature_table.setObjectName("aiFeatureTable")
@@ -567,9 +607,16 @@ class UpdatedBotManagementWidget(QWidget):
             "Pewność",
         ])
         self.ai_feature_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.ai_feature_table.horizontalHeader().setStretchLastSection(True)
         self.ai_feature_table.verticalHeader().setVisible(False)
         self.ai_feature_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.ai_feature_table.setAlternatingRowColors(True)
+        self.ai_feature_table.verticalHeader().setDefaultSectionSize(30)
+        self.ai_feature_table.setShowGrid(False)
+        self.ai_feature_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.ai_feature_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ai_layout.addWidget(self.ai_feature_table)
+        ai_layout.addSpacing(10)
 
         self.ai_risk_events = QTreeWidget()
         self.ai_risk_events.setObjectName("aiRiskEvents")
@@ -581,12 +628,17 @@ class UpdatedBotManagementWidget(QWidget):
             "Czas",
         ])
         self.ai_risk_events.setRootIsDecorated(False)
+        self.ai_risk_events.setMinimumHeight(160)
+        self.ai_risk_events.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ai_layout.addWidget(self.ai_risk_events)
 
         self.ai_recommendations = QTextEdit()
         self.ai_recommendations.setObjectName("aiRecommendations")
         self.ai_recommendations.setReadOnly(True)
         self.ai_recommendations.setPlaceholderText("Rekomendacje AI oraz wykryte anomalie pojawią się tutaj")
+        self.ai_recommendations.setMinimumHeight(280)
+        self.ai_recommendations.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.ai_recommendations.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         ai_layout.addWidget(self.ai_recommendations)
 
         parent_layout.addWidget(ai_group)
@@ -1145,8 +1197,19 @@ class UpdatedBotManagementWidget(QWidget):
     def refresh_data(self):
         """Odśwież dane botów"""
         try:
+            # Prosty throttling i ochrona przed równoległym wywołaniem
+            from datetime import datetime
+            if self._refresh_in_progress:
+                return
+            if self._last_refresh_time is not None:
+                if (datetime.now() - self._last_refresh_time).total_seconds() < self._refresh_min_interval:
+                    return
+            self._refresh_in_progress = True
+            self._last_refresh_time = datetime.now()
+
             if not self.integrated_data_manager.initialized:
                 self.logger.warning("IntegratedDataManager not initialized")
+                self._refresh_in_progress = False
                 return
             
             # Uruchom asynchroniczne odświeżanie danych, uwzględniając brak działającej pętli
@@ -1160,6 +1223,8 @@ class UpdatedBotManagementWidget(QWidget):
             
         except Exception as e:
             self.logger.error(f"Error refreshing bot data: {e}")
+            # W razie błędu resetuj flagę throttlingu
+            self._refresh_in_progress = False
     
     def _run_async_refresh_in_thread(self):
         """Uruchomienie _async_refresh_data w nowej pętli event loop (w osobnym wątku)"""
@@ -1214,56 +1279,107 @@ class UpdatedBotManagementWidget(QWidget):
             
         except Exception as e:
             self.logger.error(f"Error in async bot data refresh: {e}")
+        finally:
+            # Resetuj flagę po zakończeniu odświeżania
+            self._refresh_in_progress = False
     
     def apply_theme(self):
         """Zastosuj motyw"""
         self.setStyleSheet("""
             QWidget {
-                background-color: #f5f5f5;
+                background-color: #121212;
+                color: #eaeaea;
             }
             QLabel#pageTitle {
                 font-size: 24px;
                 font-weight: bold;
-                color: #333333;
+                color: #ffffff;
                 margin-bottom: 10px;
             }
             QLabel#sectionTitle {
                 font-size: 18px;
                 font-weight: 600;
-                color: #444444;
+                color: #d6d6d6;
                 margin: 10px 0;
             }
             QPushButton#actionButton {
-                background-color: #2196F3;
+                background-color: #667eea;
                 color: white;
                 border: none;
-                border-radius: 6px;
+                border-radius: 8px;
                 padding: 8px 16px;
-                font-weight: 500;
+                font-weight: 600;
                 margin: 2px;
             }
             QPushButton#actionButton:hover {
-                background-color: #1976D2;
+                background-color: #576bd6;
             }
             QPushButton#actionButton:pressed {
-                background-color: #1565C0;
+                background-color: #4a5bc0;
             }
             QFrame#statsFrame {
-                background-color: white;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 10px;
+                background-color: #1a1a1a;
+                border: 1px solid #2a2a2a;
+                border-radius: 10px;
+                padding: 12px;
             }
             QWidget#statCard {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                margin: 5px;
+                background-color: #181818;
+                border: 1px solid #2a2a2a;
+                border-radius: 8px;
+                margin: 6px;
             }
             QLabel#statTitle {
                 font-size: 12px;
-                color: #666666;
+                color: #c9c9c9;
                 font-weight: 500;
+            }
+            /* Styl sekcji AI – czytelniejsze tabele i większe pole rekomendacji */
+            QGroupBox#aiInsightsGroup {
+                background-color: #1a1a1a;
+                border: 1px solid #2a2a2a;
+                border-radius: 12px;
+                padding: 12px;
+                margin-top: 8px;
+            }
+            QGroupBox#aiInsightsGroup::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 6px;
+                color: #ffffff;
+                font-weight: 600;
+            }
+            QTableWidget#aiPriceTable,
+            QTableWidget#aiRiskTable,
+            QTableWidget#aiIndicatorTable,
+            QTableWidget#aiFeatureTable {
+                background-color: #181818;
+                border: 1px solid #2b2b2b;
+                border-radius: 8px;
+                gridline-color: #2b2b2b;
+            }
+            QHeaderView::section {
+                background-color: #222222;
+                color: #dddddd;
+                padding: 6px 8px;
+                border: 1px solid #2b2b2b;
+                font-weight: 600;
+            }
+            QTableWidget::item {
+                padding: 6px 8px;
+            }
+            QTreeWidget#aiRiskEvents {
+                background-color: #181818;
+                border: 1px solid #2b2b2b;
+                border-radius: 8px;
+            }
+            QTextEdit#aiRecommendations {
+                background-color: #141414;
+                border: 1px solid #2b2b2b;
+                border-radius: 8px;
+                padding: 10px;
+                color: #eaeaea;
+                font-size: 14px;
             }
         """)
     

@@ -537,7 +537,7 @@ QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
 def get_theme_style(dark_mode: bool = True) -> str:
     """Zwraca style dla wybranego motywu z responsywnością"""
     base_theme = DARK_THEME if dark_mode else LIGHT_THEME
-    return base_theme + "\n" + RESPONSIVE_STYLES
+    return base_theme + "\n" + READABILITY_ENHANCEMENTS + "\n" + RESPONSIVE_STYLES
 
 def get_card_style(gradient_type: str = "blue") -> str:
     """Zwraca style dla karty z gradientem"""
@@ -955,6 +955,101 @@ QWidget#tradesCard {
         stop:0 rgba(67, 233, 123, 0.8), stop:1 rgba(56, 239, 125, 0.8));
     border: 1px solid rgba(67, 233, 123, 0.5);
 }
+"""
+
+# Dodatkowe ulepszenia czytelności – nakładka na motyw
+READABILITY_ENHANCEMENTS = f"""
+/* Zakładki – większa czytelność i kontrast */
+QTabWidget::pane {{
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    background: #181818;
+}}
+
+QTabBar::tab {{
+    background: #2b2b2b;
+    color: #e6e6e6;
+    padding: 12px 22px;
+    margin-right: 3px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    font-weight: 600;
+    font-size: 14px;
+}}
+
+QTabBar::tab:selected {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+    color: #ffffff;
+    font-weight: 700;
+    border-bottom: 2px solid {COLORS['primary']};
+}}
+
+QTabBar::tab:hover:!selected {{
+    background: rgba(102, 126, 234, 0.25);
+    color: #ffffff;
+    border: 1px solid rgba(102, 126, 234, 0.35);
+}}
+
+/* Tabele – naprzemienne wiersze i mocniejsze nagłówki */
+QTableWidget {{
+    background: #1a1a1a;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    gridline-color: #2a2a2a;
+    font-size: 13px;
+    selection-background-color: rgba(102, 126, 234, 0.35);
+    alternate-background-color: #242424;
+}}
+
+QTableWidget::item {{
+    padding: 10px 14px;
+    border-bottom: 1px solid #2a2a2a;
+    color: #f0f0f0;
+}}
+
+QTableWidget::item:selected {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(102, 126, 234, 0.45),
+        stop:1 rgba(118, 75, 162, 0.45));
+}}
+
+QHeaderView::section {{
+    background: #2a2a2a;
+    color: #eaeaea;
+    padding: 10px 12px;
+    border: none;
+    font-weight: 600;
+    font-size: 12px;
+}}
+
+/* Grupy (QGroupBox) – spójny wygląd */
+QGroupBox {{
+    color: #ffffff;
+    font-weight: 600;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    margin-top: 12px;
+    padding: 12px;
+}}
+
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+}}
+
+/* Etykiety ogólne */
+QLabel {{
+    color: #eaeaea;
+    font-size: 13px;
+}}
+
+/* ScrollArea – tło przezroczyste, bez obwódek */
+QScrollArea {{
+    border: none;
+    background: transparent;
+}}
 """
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QPalette, QColor
