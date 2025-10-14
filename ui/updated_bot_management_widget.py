@@ -11,34 +11,74 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
 
-try:
-    from PyQt6.QtWidgets import (
-        QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QFormLayout,
-        QLabel, QPushButton, QFrame, QScrollArea, QTabWidget,
-        QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
-        QLineEdit, QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox,
-        QTextEdit, QProgressBar, QSplitter, QTreeWidget, QTreeWidgetItem,
-        QMessageBox, QMenu, QFileDialog, QDateEdit, QApplication,
-        QDialog, QDialogButtonBox, QAbstractItemView, QSizePolicy
-    )
-    from PyQt6.QtCore import (
-        Qt, QTimer, pyqtSignal, QSize, QDate, QPropertyAnimation,
-        QEasingCurve, QParallelAnimationGroup, QThread, pyqtSlot
-    )
-    from PyQt6.QtGui import (
-        QFont, QPixmap, QIcon, QPalette, QColor, QPainter,
-        QPen, QBrush, QLinearGradient, QAction, QContextMenuEvent
-    )
-    PYQT_AVAILABLE = True
-except ImportError as e:
-    print(f"PyQt6 import error in updated_bot_management_widget.py: {e}")
-    PYQT_AVAILABLE = False
-    # Fallback classes
-    class QWidget: pass
-    class QVBoxLayout: pass
-    class QHBoxLayout: pass
-    class QLabel: pass
-    class QPushButton: pass
+from utils.qt_compat import load_qt_names
+
+_QT_IMPORTS = {
+    "QtWidgets": (
+        "QWidget",
+        "QVBoxLayout",
+        "QHBoxLayout",
+        "QGridLayout",
+        "QFormLayout",
+        "QLabel",
+        "QPushButton",
+        "QFrame",
+        "QScrollArea",
+        "QTabWidget",
+        "QTableWidget",
+        "QTableWidgetItem",
+        "QHeaderView",
+        "QComboBox",
+        "QLineEdit",
+        "QSpinBox",
+        "QDoubleSpinBox",
+        "QCheckBox",
+        "QGroupBox",
+        "QTextEdit",
+        "QProgressBar",
+        "QSplitter",
+        "QTreeWidget",
+        "QTreeWidgetItem",
+        "QMessageBox",
+        "QMenu",
+        "QFileDialog",
+        "QDateEdit",
+        "QApplication",
+        "QDialog",
+        "QDialogButtonBox",
+        "QAbstractItemView",
+        "QSizePolicy",
+    ),
+    "QtCore": (
+        "Qt",
+        "QTimer",
+        "pyqtSignal",
+        "QSize",
+        "QDate",
+        "QPropertyAnimation",
+        "QEasingCurve",
+        "QParallelAnimationGroup",
+        "QThread",
+        "pyqtSlot",
+    ),
+    "QtGui": (
+        "QFont",
+        "QPixmap",
+        "QIcon",
+        "QPalette",
+        "QColor",
+        "QPainter",
+        "QPen",
+        "QBrush",
+        "QLinearGradient",
+        "QAction",
+        "QContextMenuEvent",
+    ),
+}
+
+PYQT_AVAILABLE, _qt_objects = load_qt_names(_QT_IMPORTS)
+globals().update(_qt_objects)
+del _qt_objects
 
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -62,6 +102,32 @@ try:
 except ImportError:
     FLOW_LAYOUT_AVAILABLE = False
 
+STRATEGY_DISPLAY_NAMES = {
+    "dca": "DCA",
+    "grid": "Grid Trading",
+    "scalping": "Scalping",
+    "swing": "Swing Trading",
+    "arbitrage": "Arbitrage",
+    "ai": "AI",
+    "custom": "Custom",
+    "momentum": "Momentum",
+    "mean_reversion": "Mean Reversion",
+    "meanreversion": "Mean Reversion",
+    "breakout": "Breakout",
+    "breakout_bot": "Breakout",
+}
+
+
+def format_strategy_label(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    text = str(value).strip()
+    if not text:
+        return "N/A"
+    normalized = text.lower().replace('-', '_').replace(' ', '_')
+    return STRATEGY_DISPLAY_NAMES.get(normalized, text)
+
+
 class BotCard(QWidget):
     """Karta pojedynczego bota z nowoczesnym designem"""
     
@@ -77,7 +143,13 @@ class BotCard(QWidget):
         self.setup_ui()
         self.apply_style()
         self.update_data(bot_data)
-    
+
+    @staticmethod
+    def _format_symbol(value: Any) -> str:
+        if not value:
+            return "N/A"
+        return str(value).strip().upper().replace('-', '/').replace(' ', '') or "N/A"
+
     def setup_ui(self):
         """Konfiguracja UI karty bota"""
         self.setObjectName("botCard")
@@ -109,15 +181,15 @@ class BotCard(QWidget):
         # Strategia
         strategy_label = QLabel("Strategia:")
         strategy_label.setObjectName("infoLabel")
-        self.strategy_value = QLabel(self.bot_data.get('strategy', 'N/A'))
+        self.strategy_value = QLabel(format_strategy_label(self.bot_data.get('strategy', 'N/A')))
         self.strategy_value.setObjectName("infoValue")
         info_layout.addWidget(strategy_label, 0, 0)
         info_layout.addWidget(self.strategy_value, 0, 1)
-        
+
         # Para handlowa
         symbol_label = QLabel("Para:")
         symbol_label.setObjectName("infoLabel")
-        self.symbol_value = QLabel(self.bot_data.get('symbol', 'N/A'))
+        self.symbol_value = QLabel(self._format_symbol(self.bot_data.get('symbol', 'N/A')))
         self.symbol_value.setObjectName("infoValue")
         info_layout.addWidget(symbol_label, 1, 0)
         info_layout.addWidget(self.symbol_value, 1, 1)
@@ -165,23 +237,27 @@ class BotCard(QWidget):
     
     def apply_style(self):
         """Zastosuj style do karty"""
-        self.setStyleSheet("""
-            QWidget {
+        primary = COLORS.get('primary', '#667eea')
+        secondary = COLORS.get('secondary', '#764ba2')
+
+        self.setStyleSheet(
+            f"""
+            QWidget {{
                 background-color: #1a1a1a;
                 border: 1px solid #2a2a2a;
                 border-radius: 12px;
                 margin: 5px;
                 color: #eaeaea;
-            }
-            QWidget:hover {
-                border-color: #667eea;
-            }
-            QLabel#botName {
+            }}
+            QWidget:hover {{
+                border-color: {primary};
+            }}
+            QLabel#botName {{
                 font-size: 16px;
                 font-weight: bold;
                 color: #ffffff;
-            }
-            QLabel#statusIndicator {
+            }}
+            QLabel#statusIndicator {{
                 font-size: 20px;
                 margin-left: 5px;
             }}
@@ -193,8 +269,8 @@ class BotCard(QWidget):
             QLabel#infoValue {{
                 font-size: 12px;
                 color: #f0f0f0;
-            }
-            QLabel#pnlValue {
+            }}
+            QLabel#pnlValue {{
                 font-size: 12px;
                 font-weight: 600;
             }}
@@ -226,8 +302,10 @@ class BotCard(QWidget):
             QPushButton#iconButton:hover {{
                 background: rgba(102, 126, 234, 0.16);
             }}
-        """)
-        self._start_button_style = f"""
+            """
+        )
+        self._start_button_style = (
+            f"""
             QPushButton#actionButton {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 {primary}, stop:1 {secondary});
@@ -243,7 +321,8 @@ class BotCard(QWidget):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 rgba(102, 126, 234, 0.9), stop:1 rgba(118, 75, 162, 0.9));
             }}
-        """
+            """
+        )
         self._stop_button_style = """
             QPushButton#actionButton {
                 background-color: #667eea;
@@ -303,10 +382,10 @@ class BotCard(QWidget):
                 self.start_stop_btn.setStyleSheet(self._start_button_style)
         
         # Strategia
-        self.strategy_value.setText(bot_data.get('strategy', 'N/A'))
-        
+        self.strategy_value.setText(format_strategy_label(bot_data.get('strategy', 'N/A')))
+
         # Para
-        self.symbol_value.setText(bot_data.get('symbol', 'N/A'))
+        self.symbol_value.setText(self._format_symbol(bot_data.get('symbol', 'N/A')))
         
         # P&L
         pnl = bot_data.get('pnl', 0.0)
@@ -336,8 +415,26 @@ class BotConfigDialog(QDialog):
         self.setWindowTitle("Konfiguracja Bota" if not bot_data else "Edycja Bota")
         self.setModal(True)
         self.resize(500, 600)
+        try:
+            self.config_manager = get_config_manager()
+        except Exception:
+            self.config_manager = None
+        self.supported_pairs = self._load_supported_pairs()
         self.setup_ui()
-    
+
+    def _load_supported_pairs(self) -> List[str]:
+        fallback = ["BTC/USDT", "ETH/USDT", "BTC/EUR"]
+        manager = getattr(self, "config_manager", None)
+        if manager is None:
+            return fallback
+        try:
+            pairs = manager.get_supported_trading_pairs()
+            if pairs:
+                return pairs
+        except Exception:
+            pass
+        return fallback
+
     def setup_ui(self):
         """Konfiguracja UI dialogu"""
         layout = QVBoxLayout(self)
@@ -363,9 +460,21 @@ class BotConfigDialog(QDialog):
         self.exchange_combo.setCurrentText(self.bot_data.get('exchange', 'Binance'))
         basic_layout.addRow("Giełda:", self.exchange_combo)
         
-        self.symbol_edit = QLineEdit(self.bot_data.get('symbol', 'BTC/USDT'))
-        self.symbol_edit.setPlaceholderText("Para handlowa")
-        basic_layout.addRow("Para:", self.symbol_edit)
+        self.symbol_combo = QComboBox()
+        self.symbol_combo.setEditable(True)
+        if hasattr(QComboBox, "InsertPolicy"):
+            try:
+                self.symbol_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            except Exception:
+                pass
+        for pair in self.supported_pairs:
+            self.symbol_combo.addItem(pair)
+        current_symbol = self.bot_data.get('symbol') or 'BTC/USDT'
+        normalised_symbol = str(current_symbol).strip().upper().replace('-', '/').replace(' ', '')
+        if normalised_symbol not in self.supported_pairs:
+            self.symbol_combo.addItem(normalised_symbol)
+        self.symbol_combo.setCurrentText(normalised_symbol)
+        basic_layout.addRow("Para:", self.symbol_combo)
         
         form_layout.addRow(basic_group)
         
@@ -374,8 +483,34 @@ class BotConfigDialog(QDialog):
         strategy_layout = QFormLayout(strategy_group)
         
         self.strategy_combo = QComboBox()
-        self.strategy_combo.addItems(["DCA", "Grid Trading", "Scalping", "Custom"])
-        self.strategy_combo.setCurrentText(self.bot_data.get('strategy', 'DCA'))
+        self._strategy_options = [
+            ("DCA", "dca"),
+            ("Grid Trading", "grid"),
+            ("Scalping", "scalping"),
+            ("Swing Trading", "swing"),
+            ("Momentum", "momentum"),
+            ("Mean Reversion", "mean_reversion"),
+            ("Breakout", "breakout"),
+            ("Arbitrage", "arbitrage"),
+            ("AI", "ai"),
+            ("Custom", "custom"),
+        ]
+        for label, key in self._strategy_options:
+            self.strategy_combo.addItem(label, userData=key)
+        raw_strategy = str(self.bot_data.get('strategy', 'dca')).strip().lower()
+        normalized_strategy = raw_strategy.replace('-', '_').replace(' ', '_')
+        alias_map = {
+            'grid_trading': 'grid',
+            'swing_trading': 'swing',
+            'ai_trading': 'ai',
+            'meanreversion': 'mean_reversion',
+            'mean_reversion': 'mean_reversion',
+        }
+        normalized_strategy = alias_map.get(normalized_strategy, normalized_strategy)
+        for idx, (label, key) in enumerate(self._strategy_options):
+            if normalized_strategy in {key, label.lower().replace(' ', '_')}:
+                self.strategy_combo.setCurrentIndex(idx)
+                break
         strategy_layout.addRow("Typ strategii:", self.strategy_combo)
         
         form_layout.addRow(strategy_group)
@@ -417,11 +552,13 @@ class BotConfigDialog(QDialog):
     
     def get_config(self) -> Dict[str, Any]:
         """Pobierz konfigurację z formularza"""
+        symbol_text = self.symbol_combo.currentText() if hasattr(self, 'symbol_combo') else ''
+        symbol_value = str(symbol_text).strip().upper().replace('-', '/').replace(' ', '') or 'BTC/USDT'
         return {
             'name': self.name_edit.text(),
             'exchange': self.exchange_combo.currentText(),
-            'symbol': self.symbol_edit.text(),
-            'strategy': self.strategy_combo.currentText(),
+            'symbol': symbol_value,
+            'strategy': self.strategy_combo.currentData() or self.strategy_combo.currentText().lower(),
             'position_size': self.position_size_spin.value(),
             'stop_loss': self.stop_loss_spin.value(),
             'take_profit': self.take_profit_spin.value()

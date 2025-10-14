@@ -172,7 +172,51 @@ class GridStrategy(BaseStrategy):
     
     def _has_order_at_level(self, price: float, side: str) -> bool:
         """Sprawdza czy istnieje zlecenie na danym poziomie"""
-        # TODO: Implementacja sprawdzania aktywnych zleceń
+        tolerance = max(price * 0.0001, 1e-8)
+
+        # Najpierw sprawdź zlecenia zapamiętane w stanie strategii
+        orders: List[Any] = getattr(self.state, "open_orders", [])
+        for order in orders or []:
+            order_side = getattr(order, "side", getattr(order, "order_side", None))
+            if order_side and str(order_side).lower() != side.lower():
+                continue
+
+            status = str(getattr(order, "status", "pending")).lower()
+            if status in {"cancelled", "canceled", "closed"}:
+                continue
+
+            try:
+                order_price = float(getattr(order, "price", price))
+            except Exception:
+                order_price = price
+
+            if abs(order_price - price) <= tolerance:
+                return True
+
+        # Jeżeli TradingEngine jest dostępny, spróbuj sprawdzić aktywne zlecenia na giełdzie
+        try:
+            if self.trading_engine and hasattr(self.trading_engine, "get_open_orders"):
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    open_orders = self.trading_engine.get_cached_open_orders(self.config.symbol) if hasattr(self.trading_engine, "get_cached_open_orders") else []
+                else:
+                    open_orders = loop.run_until_complete(self.trading_engine.get_open_orders(self.config.symbol))
+
+                for order in open_orders or []:
+                    order_side = str(order.get('side') or order.get('type') or '').lower()
+                    if order_side and order_side != side.lower():
+                        continue
+                    try:
+                        order_price = float(order.get('price') or order.get('limit_price') or 0.0)
+                    except Exception:
+                        order_price = 0.0
+                    if order_price and abs(order_price - price) <= tolerance:
+                        status = str(order.get('status') or 'pending').lower()
+                        if status not in {"cancelled", "canceled", "closed"}:
+                            return True
+        except Exception as exc:
+            self.logger.debug(f"Falling back to local order cache in _has_order_at_level: {exc}")
+
         return False
 
 class ScalpingStrategy(BaseStrategy):

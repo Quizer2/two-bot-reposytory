@@ -231,6 +231,19 @@ class UpdatedApplicationInitializer(QThread):
                 # Uruchom pętle aktualizacji danych
                 await self.integrated_data_manager.start_data_loops()
             
+            if self.updated_bot_manager:
+                if self.updated_risk_manager:
+                    self.updated_bot_manager.risk_manager = self.updated_risk_manager
+
+                if self.integrated_data_manager:
+                    self.updated_bot_manager.data_manager = self.integrated_data_manager
+
+                if self.notification_manager and hasattr(self.updated_bot_manager, 'set_notification_manager'):
+                    try:
+                        self.updated_bot_manager.set_notification_manager(self.notification_manager)
+                    except Exception as exc:
+                        logger.warning(f"Could not attach NotificationManager to UpdatedBotManager: {exc}")
+
             # Połącz RiskManager z TradingEngine
             if self.updated_risk_manager and self.trading_engine:
                 # Risk Manager będzie walidował wszystkie zlecenia

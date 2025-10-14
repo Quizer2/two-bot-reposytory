@@ -1461,11 +1461,28 @@ class IntegratedDataManager:
             from .updated_bot_manager import BotType
 
             strategy_key = str(bot_config.get('strategy') or bot_config.get('type') or 'custom').lower()
+            strategy_key = strategy_key.replace('_', ' ').replace('-', ' ')
+            strategy_key = " ".join(strategy_key.split())
             strategy_mapping = {
                 'dca': BotType.DCA,
                 'grid': BotType.GRID,
+                'grid trading': BotType.GRID,
                 'scalping': BotType.SCALPING,
+                'ai trading': BotType.AI,
                 'ai': BotType.AI,
+                'ai bot': BotType.AI,
+                'arbitrage': BotType.ARBITRAGE,
+                'arbitrage trading': BotType.ARBITRAGE,
+                'swing': BotType.SWING,
+                'swing trading': BotType.SWING,
+                'momentum': BotType.MOMENTUM,
+                'momentum trading': BotType.MOMENTUM,
+                'mean_reversion': BotType.MEAN_REVERSION,
+                'mean reversion': BotType.MEAN_REVERSION,
+                'mean-reversion': BotType.MEAN_REVERSION,
+                'breakout': BotType.BREAKOUT,
+                'breakout trading': BotType.BREAKOUT,
+                'breakout-bot': BotType.BREAKOUT,
                 'custom': BotType.CUSTOM,
             }
             bot_type = strategy_mapping.get(strategy_key, BotType.CUSTOM)
@@ -1492,6 +1509,25 @@ class IntegratedDataManager:
                 parameters.setdefault('pair', symbol)
                 if 'budget' not in parameters and 'amount' in trading_settings:
                     parameters['budget'] = trading_settings['amount']
+            if bot_type == BotType.ARBITRAGE:
+                exchanges = parameters.get('exchanges') or trading_settings.get('exchanges') if trading_settings else None
+                if isinstance(exchanges, str):
+                    exchanges = [segment.strip() for segment in exchanges.split(',') if segment.strip()]
+                parameters['exchanges'] = exchanges or []
+                for key in (
+                    'min_spread_percentage',
+                    'max_spread_percentage',
+                    'max_slippage_percentage',
+                    'max_concurrent_trades',
+                ):
+                    if key not in parameters and trading_settings.get(key) if trading_settings else None:
+                        parameters[key] = trading_settings[key]
+            if bot_type == BotType.SWING:
+                if 'timeframe' not in parameters and trading_settings.get('timeframe') if trading_settings else None:
+                    parameters['timeframe'] = trading_settings['timeframe']
+                for key in ('amount', 'take_profit_ratio', 'stop_loss_percentage', 'short_window', 'long_window'):
+                    if key not in parameters and trading_settings.get(key) if trading_settings else None:
+                        parameters[key] = trading_settings[key]
 
             risk_settings = bot_config.get('risk_settings') or {}
 

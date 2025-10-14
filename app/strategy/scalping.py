@@ -118,7 +118,8 @@ class ScalpingStrategy:
         take_profit_percentage: Optional[float] = None,
         max_daily_trades: Optional[int] = None,
         start_time: Optional[str] = None,
-        end_time: Optional[str] = None
+        end_time: Optional[str] = None,
+        bot_id: Optional[int] = None
     ):
         # Podstawowe parametry
         self.symbol = symbol
@@ -150,7 +151,10 @@ class ScalpingStrategy:
         self.status = ScalpingStatus.STOPPED
         self.is_running = False
         self.is_paused = False
-        
+
+        # Kontekst identyfikatora bota
+        self.bot_id: Optional[int] = bot_id
+
         # Komponenty
         self.exchange: Optional[BaseExchange] = None
         self.db_manager: Optional[DatabaseManager] = None
@@ -165,6 +169,7 @@ class ScalpingStrategy:
         self.current_position: Optional[ScalpingPosition] = None
         self.trade_history: List[ScalpingTrade] = []
         self.statistics = ScalpingStatistics()
+        self._position_record_id: Optional[str] = None
         
         # Liczniki
         self.daily_trades = 0
@@ -201,7 +206,8 @@ class ScalpingStrategy:
         db_manager: DatabaseManager,
         risk_manager: RiskManager,
         exchange: BaseExchange,
-        data_manager=None
+        data_manager=None,
+        bot_id: Optional[int] = None
     ):
         """Inicjalizacja strategii"""
         try:
@@ -209,7 +215,9 @@ class ScalpingStrategy:
             self.risk_manager = risk_manager
             self.exchange = exchange
             self.data_manager = data_manager
-            
+            if bot_id is not None:
+                self.bot_id = bot_id
+
             # Wczytanie historii transakcji
             await self._load_trade_history()
             
@@ -678,7 +686,31 @@ class ScalpingStrategy:
                 
                 # Zapisanie do bazy danych
                 await self._save_trade_to_db(trade)
-                
+
+                if self.db_manager:
+                    bot_db_id = self._resolve_bot_id()
+                    if bot_db_id is not None and self._position_record_id:
+                        position_payload = {
+                            'strategy': 'scalping',
+                            'kind': 'position',
+                            'order_id': trade.entry_order_id,
+                            'side': trade.side,
+                            'amount': trade.amount,
+                            'entry_price': trade.entry_price,
+                            'entry_time': trade.entry_time.isoformat(),
+                            'exit_price': trade.exit_price,
+                            'exit_time': trade.exit_time.isoformat(),
+                            'pnl': trade.pnl,
+                            'pnl_percentage': trade.pnl_percentage,
+                        }
+                        await self.db_manager.upsert_strategy_order(
+                            bot_db_id,
+                            self._position_record_id,
+                            position_payload,
+                            'closed'
+                        )
+                        self._position_record_id = None
+
                 # Aktualizacja statystyk
                 await self._calculate_statistics()
                 
@@ -803,32 +835,137 @@ class ScalpingStrategy:
     async def _load_trade_history(self):
         """Wczytanie historii transakcji z bazy danych"""
         try:
-            # Implementacja wczytywania z bazy danych
-            # TODO: Implementacja po utworzeniu schematu bazy danych
-            pass
-            
+            if not self.db_manager:
+                return
+
+            bot_db_id = self._resolve_bot_id()
+            if bot_db_id is None:
+                return
+
+            records = await self.db_manager.list_strategy_orders(bot_db_id, limit=500)
+            history: List[ScalpingTrade] = []
+
+            for record in records:
+                payload = record.get('payload') if isinstance(record, dict) else {}
+                if not payload:
+                    continue
+
+                if payload.get('strategy') not in {'scalping', 'scalping_trade'}:
+                    continue
+                if payload.get('kind') not in {'trade', 'scalping_trade'}:
+                    continue
+
+                try:
+                    entry_time = datetime.fromisoformat(payload.get('entry_time')) if payload.get('entry_time') else datetime.utcnow()
+                except Exception:
+                    entry_time = datetime.utcnow()
+
+                try:
+                    exit_time = datetime.fromisoformat(payload.get('exit_time')) if payload.get('exit_time') else entry_time
+                except Exception:
+                    exit_time = entry_time
+
+                trade = ScalpingTrade(
+                    entry_order_id=str(payload.get('entry_order_id') or payload.get('order_id') or record.get('order_id') or ''),
+                    exit_order_id=str(payload.get('exit_order_id') or payload.get('order_id') or ''),
+                    side=str(payload.get('side') or payload.get('direction') or 'buy'),
+                    amount=float(payload.get('amount') or 0.0),
+                    entry_price=float(payload.get('entry_price') or payload.get('price') or 0.0),
+                    exit_price=float(payload.get('exit_price') or payload.get('price') or 0.0),
+                    entry_time=entry_time,
+                    exit_time=exit_time,
+                    pnl=float(payload.get('pnl') or 0.0),
+                    pnl_percentage=float(payload.get('pnl_percentage') or 0.0),
+                    duration_seconds=int(payload.get('duration_seconds') or 0),
+                    exit_reason=str(payload.get('exit_reason') or 'unknown'),
+                )
+                history.append(trade)
+
+            if history:
+                self.trade_history = sorted(history, key=lambda t: t.exit_time)
+
         except Exception as e:
             logger.error(f"Błąd wczytywania historii transakcji: {e}")
-    
+
     async def _save_position_to_db(self):
         """Zapisanie pozycji do bazy danych"""
         try:
-            # Implementacja zapisywania pozycji
-            # TODO: Implementacja po utworzeniu schematu bazy danych
-            pass
-            
+            if not self.db_manager or not self.current_position:
+                return
+
+            bot_db_id = self._resolve_bot_id()
+            if bot_db_id is None:
+                return
+
+            payload = {
+                'strategy': 'scalping',
+                'kind': 'position',
+                'order_id': self.current_position.order_id,
+                'side': self.current_position.side,
+                'amount': self.current_position.amount,
+                'entry_price': self.current_position.entry_price,
+                'entry_time': self.current_position.entry_time.isoformat(),
+                'current_price': self.current_position.current_price,
+                'unrealized_pnl': self.current_position.unrealized_pnl,
+                'unrealized_pnl_percentage': self.current_position.unrealized_pnl_percentage,
+            }
+
+            record_id = f"position_{self.current_position.order_id}"
+            await self.db_manager.upsert_strategy_order(bot_db_id, record_id, payload, 'open')
+            self._position_record_id = record_id
+
         except Exception as e:
             logger.error(f"Błąd zapisywania pozycji: {e}")
-    
+
     async def _save_trade_to_db(self, trade: ScalpingTrade):
         """Zapisanie transakcji do bazy danych"""
         try:
-            # Implementacja zapisywania transakcji
-            # TODO: Implementacja po utworzeniu schematu bazy danych
-            pass
-            
+            if not self.db_manager:
+                return
+
+            bot_db_id = self._resolve_bot_id()
+            if bot_db_id is None:
+                return
+
+            payload = {
+                'strategy': 'scalping',
+                'kind': 'trade',
+                'entry_order_id': trade.entry_order_id,
+                'exit_order_id': trade.exit_order_id,
+                'side': trade.side,
+                'amount': trade.amount,
+                'entry_price': trade.entry_price,
+                'exit_price': trade.exit_price,
+                'entry_time': trade.entry_time.isoformat(),
+                'exit_time': trade.exit_time.isoformat(),
+                'pnl': trade.pnl,
+                'pnl_percentage': trade.pnl_percentage,
+                'duration_seconds': trade.duration_seconds,
+                'exit_reason': trade.exit_reason,
+            }
+
+            record_id = f"trade_{trade.exit_order_id or trade.entry_order_id}"
+            await self.db_manager.upsert_strategy_order(bot_db_id, record_id, payload, 'closed')
+
         except Exception as e:
             logger.error(f"Błąd zapisywania transakcji: {e}")
+
+    def _resolve_bot_id(self) -> Optional[int]:
+        if self.bot_id is None:
+            return None
+
+        try:
+            return int(self.bot_id)
+        except (TypeError, ValueError):
+            if isinstance(self.bot_id, str) and self.bot_id.startswith('bot_'):
+                candidate = self.bot_id.split('_', 1)[1]
+                try:
+                    return int(candidate)
+                except (TypeError, ValueError):
+                    pass
+
+        logger.warning("Nie można zinterpretować bot_id='%s' dla strategii Scalping", self.bot_id)
+        return None
     
     def get_status(self) -> Dict:
         """Pobranie statusu strategii"""

@@ -561,29 +561,98 @@ class GridStrategy:
             price_position = (self.statistics.current_price - self.min_price) / (self.max_price - self.min_price)
             self.statistics.price_range_utilization = max(0, min(100, price_position * 100))
     
+    def _resolve_bot_id(self) -> Optional[int]:
+        """Konwertuje identyfikator bota na liczbę całkowitą."""
+        if not self.bot_id:
+            return None
+
+        try:
+            return int(self.bot_id)
+        except (TypeError, ValueError):
+            if isinstance(self.bot_id, str) and self.bot_id.startswith("bot_"):
+                candidate = self.bot_id.split("_", 1)[1]
+                try:
+                    return int(candidate)
+                except (TypeError, ValueError):
+                    pass
+
+        self.logger.warning("Unable to resolve bot_id '%s' to integer", self.bot_id)
+        return None
+
     async def _load_order_history(self):
         """Ładuje historię zleceń z bazy danych"""
+        if not self.db_manager:
+            return
+
+        bot_db_id = self._resolve_bot_id()
+        if bot_db_id is None:
+            return
+
         try:
-            # TODO: Implementuj ładowanie z bazy danych
-            pass
+            records = await self.db_manager.list_strategy_orders(bot_db_id, limit=500)
+            loaded_orders: List[GridOrder] = []
+
+            for record in records:
+                payload = record.get('payload') if isinstance(record, dict) else {}
+                if payload is None:
+                    payload = {}
+
+                timestamp_raw = payload.get('timestamp') or record.get('created_at') or record.get('timestamp')
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_raw) if timestamp_raw else datetime.utcnow()
+                except Exception:
+                    timestamp = datetime.utcnow()
+
+                try:
+                    level = int(payload.get('level') or record.get('level') or 0)
+                except Exception:
+                    level = 0
+
+                order = GridOrder(
+                    id=str(record.get('order_id') or record.get('id') or f"grid_{len(loaded_orders)}"),
+                    timestamp=timestamp,
+                    level=level,
+                    side=str(payload.get('side') or record.get('side') or 'buy'),
+                    price=float(payload.get('price') or record.get('price') or 0.0),
+                    amount=float(payload.get('amount') or record.get('amount') or 0.0),
+                    status=str(payload.get('status') or record.get('status') or 'pending'),
+                    exchange_order_id=payload.get('exchange_order_id') or record.get('exchange_order_id'),
+                    profit=float(payload.get('profit') or record.get('profit') or 0.0),
+                )
+                loaded_orders.append(order)
+
+            self.orders = loaded_orders
         except Exception as e:
             self.logger.error(f"Error loading order history: {e}")
-    
+
     async def _save_order_to_db(self, order: GridOrder):
         """Zapisuje zlecenie do bazy danych"""
+        if not self.db_manager:
+            return
+
+        bot_db_id = self._resolve_bot_id()
+        if bot_db_id is None:
+            return
+
         try:
-            # TODO: Implementuj zapis do bazy danych
-            pass
+            payload = {
+                'strategy': 'grid',
+                'level': order.level,
+                'side': order.side,
+                'price': order.price,
+                'amount': order.amount,
+                'status': order.status,
+                'timestamp': order.timestamp.isoformat(),
+                'exchange_order_id': order.exchange_order_id,
+                'profit': order.profit,
+            }
+            await self.db_manager.upsert_strategy_order(bot_db_id, order.id, payload, order.status)
         except Exception as e:
             self.logger.error(f"Error saving order to database: {e}")
-    
+
     async def _update_order_in_db(self, order: GridOrder):
         """Aktualizuje zlecenie w bazie danych"""
-        try:
-            # TODO: Implementuj aktualizację w bazie danych
-            pass
-        except Exception as e:
-            self.logger.error(f"Error updating order in database: {e}")
+        await self._save_order_to_db(order)
     
     def get_status(self) -> Dict[str, Any]:
         """Zwraca status strategii"""
