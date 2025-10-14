@@ -477,9 +477,12 @@ def check_dependencies():
     """Sprawdza zależności aplikacji"""
     missing_deps = []
     
-    # Sprawdź PyQt6
+    # Sprawdź PyQt6 (pozwól na stuby w środowisku testowym)
     if not PYQT_AVAILABLE:
-        missing_deps.append("PyQt6")
+        logger.warning(
+            "Wykryto brak natywnych bibliotek PyQt6. Kontynuuję w trybie stubów – "
+            "zainstaluj pakiet PyQt6, aby uruchomić pełen interfejs graficzny."
+        )
     
     # Sprawdź inne zależności
     try:

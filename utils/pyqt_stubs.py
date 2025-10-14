@@ -114,6 +114,32 @@ def install_pyqt_stubs(force: bool = False) -> bool:
         def screen(self):
             return SimpleNamespace(availableGeometry=lambda: QRect(0, 0, 1920, 1080))
 
+    class QSplashScreen(QWidget):
+        def __init__(self, pixmap=None):
+            super().__init__()
+            self._pixmap = pixmap
+            self._window_flags = 0
+            self._message = ""
+            self._alignment = None
+            self._color = None
+
+        def setWindowFlags(self, flags):
+            self._window_flags = flags
+
+        def show(self):
+            return None
+
+        def showMessage(self, message, alignment=None, color=None):
+            self._message = message
+            self._alignment = alignment
+            self._color = color
+
+        def clearMessage(self):
+            self._message = ""
+
+        def finish(self, widget):
+            return None
+
     class QMainWindow(QWidget):
         def __init__(self, parent=None):
             super().__init__(parent)
@@ -149,6 +175,31 @@ def install_pyqt_stubs(force: bool = False) -> bool:
 
         def __init__(self, args=None):
             type(self)._inst = self
+            self._application_name = ""
+            self._application_version = ""
+            self._organization_name = ""
+            self._style = "Fusion"
+            self._font = None
+            self.aboutToQuit = SimpleNamespace(connect=lambda callback: None)
+            self.lastWindowClosed = SimpleNamespace(connect=lambda callback: None)
+
+        def setApplicationName(self, name):
+            self._application_name = name
+
+        def setApplicationVersion(self, version):
+            self._application_version = version
+
+        def setOrganizationName(self, name):
+            self._organization_name = name
+
+        def setStyle(self, style):
+            self._style = style
+
+        def setFont(self, font):
+            self._font = font
+
+        def processEvents(self):
+            return None
 
         def exec(self):  # pragma: no cover - nie używane w testach
             return 0
@@ -304,6 +355,7 @@ def install_pyqt_stubs(force: bool = False) -> bool:
             AlignLeft = 0
             AlignRight = 1
             AlignCenter = 2
+            AlignBottom = 3
 
         class Orientation:
             Horizontal = 1
@@ -853,6 +905,7 @@ def install_pyqt_stubs(force: bool = False) -> bool:
     qtwidgets.QGroupBox = QGroupBox
     qtwidgets.QDialog = QDialog
     qtwidgets.QMessageBox = QMessageBox
+    qtwidgets.QSplashScreen = QSplashScreen
     qtwidgets.QTreeWidget = QTreeWidget
     qtwidgets.QTreeWidgetItem = QTreeWidgetItem
     qtwidgets.QFileDialog = QFileDialog

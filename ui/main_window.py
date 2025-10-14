@@ -4001,7 +4001,11 @@ class MainWindow(QMainWindow):
             
             # Utwórz instancję tylko raz
             if self.settings_widget is None:
-                self.settings_widget = SettingsWidget()
+                self.settings_widget = SettingsWidget(
+                    config_manager=self.config_manager,
+                    risk_manager=self.risk_manager,
+                    notification_manager=self.notification_manager,
+                )
                 
             self.content_layout.addWidget(self.settings_widget)
         except (ImportError, Exception) as e:
