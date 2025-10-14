@@ -1,0 +1,34 @@
+{
+  "summary": {
+    "total_value": 18200.0,
+    "available_balance": 11000.0,
+    "invested_amount": 7200.0,
+    "total_profit_loss": 384.0,
+    "total_profit_loss_percent": 5.63,
+    "daily_change": 253.15807009822257,
+    "daily_change_percent": 1.7047681488095794
+  },
+  "positions": [
+    {
+      "symbol": "BTC/USDT",
+      "amount": 0.25,
+      "value": 6250.0,
+      "profit_loss": 93.75,
+      "profit_loss_percent": 1.5228426395939088
+    },
+    {
+      "symbol": "ETH/USDT",
+      "amount": 3.0,
+      "value": 5400.0,
+      "profit_loss": 113.39999999999964,
+      "profit_loss_percent": 2.1450459652706773
+    },
+    {
+      "symbol": "BTC/EUR",
+      "amount": 0.1,
+      "value": 3200.0,
+      "profit_loss": 41.59999999999991,
+      "profit_loss_percent": 1.3171225937183355
+    }
+  ]
+}
