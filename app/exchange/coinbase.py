@@ -166,6 +166,7 @@ class CoinbaseExchange(BaseExchange):
             logger.error(f"Błąd podczas pobierania księgi zleceń Coinbase {pair}: {e}", exc_info=True)
             return {'bids': [], 'asks': [], 'timestamp': None}
 
+    @net_guard('exchange:create_order')
     async def create_order(self, pair: str, side: str, amount: float,
                            price: Optional[float] = None, order_type: str = 'market',
                            **kwargs) -> Optional[Dict]:
@@ -216,6 +217,7 @@ class CoinbaseExchange(BaseExchange):
             logger.error(f"Błąd podczas tworzenia zlecenia Coinbase {pair}: {e}", exc_info=True)
             return None
 
+    @net_guard('exchange:cancel_order')
     async def cancel_order(self, order_id: str, pair: str) -> bool:
         try:
             response = await self.make_request('DELETE', f'/orders/{order_id}', signed=True)

@@ -200,6 +200,7 @@ class BybitExchange(BaseExchange):
             logger.error(f"Błąd podczas pobierania księgi zleceń Bybit {pair}: {e}", exc_info=True)
             return {'bids': [], 'asks': [], 'timestamp': None}
     
+    @net_guard('exchange:create_order')
     async def create_order(self, pair: str, side: str, amount: float,
                           price: Optional[float] = None, order_type: str = 'market',
                           **kwargs) -> Optional[Dict]:
@@ -260,6 +261,7 @@ class BybitExchange(BaseExchange):
             logger.error(f"Błąd Bybit API podczas tworzenia zlecenia {pair}: {e}", exc_info=True)
             return None
     
+    @net_guard('exchange:cancel_order')
     async def cancel_order(self, order_id: str, pair: str) -> bool:
         """Anulowanie zlecenia na Bybit"""
         try:
@@ -335,6 +337,7 @@ class BybitExchange(BaseExchange):
             return None
     
 
+    @net_guard('exchange:get_open_orders')
     async def get_open_orders(self, pair: Optional[str] = None) -> List[Dict]:
         """Pobranie otwartych zleceń z Bybit"""
         try:

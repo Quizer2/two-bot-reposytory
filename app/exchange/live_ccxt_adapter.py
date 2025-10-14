@@ -14,6 +14,8 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
+from utils.net_wrappers import net_guard
+
 logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional production dependency
@@ -70,6 +72,7 @@ class LiveCCXTAdapter:
             except Exception:  # pragma: no cover - defensive logging
                 logger.exception("Sandbox mode enabling failed for %s", exchange_id)
         self.exchange_id = exchange_id
+        self.guard_namespace = exchange_id.lower()
 
     # ------------------------------------------------------------------
     # Convenience helpers mirroring the simulated adapter API
@@ -82,6 +85,7 @@ class LiveCCXTAdapter:
             logger.error("Connection test for %s failed: %s", self.exchange_id, exc)
             return False
 
+    @net_guard("exchange:get_balance")
     async def get_balance(self, currency: Optional[str] = None) -> Dict[str, Any]:
         balances = await self._client.fetch_balance()
         if currency:
@@ -102,13 +106,16 @@ class LiveCCXTAdapter:
             }
         return normalised
 
+    @net_guard("exchange:get_current_price")
     async def get_current_price(self, symbol: str) -> float:
         ticker = await self._client.fetch_ticker(symbol)
         return float(ticker.get("last") or ticker.get("close") or ticker.get("ask") or 0.0)
 
+    @net_guard("exchange:get_ticker")
     async def fetch_ticker(self, symbol: str) -> Dict[str, Any]:
         return await self._client.fetch_ticker(symbol)
 
+    @net_guard("exchange:place_order")
     async def place_order(
         self,
         symbol: str,
@@ -140,6 +147,7 @@ class LiveCCXTAdapter:
             "info": order.get("info", {}),
         }
 
+    @net_guard("exchange:cancel_order")
     async def cancel_order(self, order_id: str, symbol: Optional[str] = None) -> bool:
         try:
             await self._client.cancel_order(order_id, symbol)
@@ -154,6 +162,7 @@ class LiveCCXTAdapter:
             )
             return False
 
+    @net_guard("exchange:get_order_status")
     async def get_order_status(self, order_id: str, symbol: Optional[str] = None) -> Dict[str, Any]:
         order = await self._client.fetch_order(order_id, symbol)
         return {
@@ -166,12 +175,15 @@ class LiveCCXTAdapter:
             "remaining": order.get("remaining"),
         }
 
+    @net_guard("exchange:get_open_orders")
     async def get_open_orders(self, symbol: Optional[str] = None):
         return await self._client.fetch_open_orders(symbol)
 
+    @net_guard("exchange:get_order_book")
     async def fetch_order_book(self, symbol: str, limit: Optional[int] = None) -> Dict[str, Any]:
         return await self._client.fetch_order_book(symbol, limit)
 
+    @net_guard("exchange:get_klines")
     async def fetch_ohlcv(
         self,
         symbol: str,
