@@ -9,6 +9,8 @@ only needs them to expose a consistent async API.
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
