@@ -1425,15 +1425,12 @@ class UpdatedMainWindow(QMainWindow):
     def setup_styles(self):
         """Ustawia nowoczesne style dla głównego okna"""
         if STYLES_AVAILABLE:
-            # Domyślnie stosujemy jasny, czytelny motyw
+            # Używamy nowoczesnego ciemnego motywu z ulepszeniami czytelności
             try:
-                self.setStyleSheet(get_theme_style(dark_mode=False))
-            except Exception as exc:
-                logger.warning(f"Falling back to base light theme: {exc}")
-                from ui.styles import LIGHT_THEME  # type: ignore
-                self.setStyleSheet(LIGHT_THEME)
-            else:
-                logger.info("Applied modern light theme styles")
+                self.setStyleSheet(get_theme_style(True))
+            except Exception:
+                self.setStyleSheet(DARK_THEME)
+            logger.info("Applied modern dark theme styles")
         else:
             # Fallback do podstawowych stylów
             self.setStyleSheet("""

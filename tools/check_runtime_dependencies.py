@@ -148,20 +148,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--env-file",
-        default=str(
-            PRODUCTION_ENV_FILE
-            if PRODUCTION_ENV_FILE.exists()
-            else PRODUCTION_ENV_TEMPLATE
-        ),
+        default=str(PRODUCTION_ENV_FILE if PRODUCTION_ENV_FILE.exists() else PRODUCTION_ENV_TEMPLATE),
         help="Ścieżka do pliku .env zawierającego konfigurację produkcyjną",
-    )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help=(
-            "Zachowano dla kompatybilności ze skryptami wydaniowymi. "
-            "Wyjście skryptu zawsze jest w formacie JSON."
-        ),
     )
     args = parser.parse_args()
 
