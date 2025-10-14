@@ -34,6 +34,7 @@ class BotType(Enum):
     GRID = "grid"
     DCA = "dca"
     CUSTOM = "custom"
+    AI = "ai"
 
 class BotManager:
     """

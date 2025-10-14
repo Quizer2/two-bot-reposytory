@@ -31,6 +31,9 @@ class SystemStatus:
     trading_engine_ready: bool
     risk_manager_active: bool
     last_updated: datetime
+    fail_safe_status: str = "unknown"
+    last_checkpoint: Optional[datetime] = None
+    requires_attention: bool = False
 
 class IntegratedDataManager:
     """
@@ -103,13 +106,22 @@ class IntegratedDataManager:
         self._system_status_task = None
         self._ai_snapshot_task = None
         self._ai_data_provider = None
-        
+
+        # Rozszerzone komponenty i cache dashboardu
+        self.enhanced_portfolio_manager = None
+        self._dashboard_cache: Optional[Dict[str, Any]] = None
+        self._dashboard_cache_ts: Optional[datetime] = None
+        self._dashboard_cache_ttl = timedelta(seconds=5)
+
         # Flaga trybu produkcyjnego (z ConfigManager z fallbackiem do ENV)
         try:
             self.production_mode = bool(self.config_manager.get_setting("app", "production_mode", False))
         except Exception:
             env_val = os.environ.get("PRODUCTION_MODE", "false").lower()
             self.production_mode = env_val in ("1", "true", "yes")
+
+        # Fail-safe manager (opcjonalny, ustawiany przez inicjalizator aplikacji)
+        self.fail_safe_manager = None
 
     def _is_production_mode(self) -> bool:
         """Zwraca informację czy aplikacja działa w trybie produkcyjnym.
@@ -157,8 +169,20 @@ class IntegratedDataManager:
                 self.components_ready = self.unified_data_manager.components_ready.copy()
                 # Upewnij się, że flaga data_manager odzwierciedla aktualny stan
                 self.components_ready['data_manager'] = bool(self.data_manager)
+
+                # 4. Podłącz rozszerzony PortfolioManager dla zaawansowanych metryk, jeśli dostępny
+                try:
+                    if self.data_manager is not None:
+                        from core.updated_portfolio_manager import get_updated_portfolio_manager
+                        self.enhanced_portfolio_manager = get_updated_portfolio_manager(self.data_manager)
+                        if self.enhanced_portfolio_manager:
+                            self.components_ready['portfolio_manager'] = True
+                            logger.info("✅ UpdatedPortfolioManager attached for enhanced metrics")
+                except Exception as exc:
+                    self.enhanced_portfolio_manager = None
+                    logger.debug("UpdatedPortfolioManager unavailable: %s", exc)
                 
-                # 4. Skonfiguruj subskrypcje UI przez UnifiedDataManager
+                # 5. Skonfiguruj subskrypcje UI przez UnifiedDataManager
                 for event_type, callbacks in self.ui_callbacks.items():
                     for callback in callbacks:
                         self.unified_data_manager.subscribe_to_ui_updates(event_type, callback)
@@ -170,18 +194,19 @@ class IntegratedDataManager:
                 
                 # Ustaw podstawowe komponenty jako None (będą obsłużone przez fallback metody)
                 self.portfolio_manager = None
+                self.enhanced_portfolio_manager = None
                 self.market_data_manager = None
                 self.trading_engine = None
                 self.strategy_engine = None
             
-            # 5. Skonfiguruj subskrypcje danych rynkowych (jeśli potrzeba)
+            # 6. Skonfiguruj subskrypcje danych rynkowych (jeśli potrzeba)
             if self.market_data_manager:
                 # Ustaw referencję do siebie dla propagacji danych (kompatybilność)
                 if hasattr(self.market_data_manager, 'set_integrated_data_manager'):
                     self.market_data_manager.set_integrated_data_manager(self)
                 await self._setup_market_data_subscriptions()
-            
-            # 6. Uruchom pętle aktualizacji
+
+            # 7. Uruchom pętle aktualizacji
             loop = get_or_create_event_loop()
             self._portfolio_task = schedule_coro_safely(lambda: self._portfolio_update_loop())
             self._system_status_task = schedule_coro_safely(lambda: self._system_status_update_loop())
@@ -348,57 +373,133 @@ class IntegratedDataManager:
         self.subscribe_to_updates(event_type, callback)
     
     async def get_dashboard_data(self) -> Dict[str, Any]:
-        """Pobiera dane dla Dashboard widget"""
+        """Pobiera dane dla Dashboard widget wraz z telemetrią i metrykami portfela."""
         try:
+            now = datetime.utcnow()
+            if (
+                self._dashboard_cache is not None
+                and self._dashboard_cache_ts is not None
+                and now - self._dashboard_cache_ts < self._dashboard_cache_ttl
+            ):
+                return self._dashboard_cache
+
+            telemetry = self._collect_runtime_stats()
+
             # Bezpieczny fallback, gdy komponenty nie są jeszcze dostępne
             if self.portfolio_manager is None or self.data_manager is None:
                 logger.warning("PortfolioManager or DataManager not available - returning basic dashboard data")
                 system_status = await self.get_system_status()
-                return {
+                result = {
                     'portfolio': {
                         'total_value': 0.0,
                         'daily_change': 0.0,
                         'daily_change_percent': 0.0,
                         'profit_loss': 0.0,
-                        'profit_loss_percent': 0.0
+                        'profit_loss_percent': 0.0,
+                        'weekly_change': 0.0,
+                        'weekly_change_percent': 0.0,
+                        'monthly_change': 0.0,
+                        'monthly_change_percent': 0.0,
+                        'max_drawdown': 0.0,
+                        'sharpe_ratio': 0.0,
+                    },
+                    'portfolio_kpis': {
+                        'win_rate': 0.0,
+                        'profit_factor': 0.0,
+                        'avg_win': 0.0,
+                        'avg_loss': 0.0,
+                        'total_trades': 0,
+                        'winning_trades': 0,
+                        'losing_trades': 0,
+                        'total_fees_paid': 0.0,
+                        'sharpe_ratio': 0.0,
+                        'sortino_ratio': 0.0,
+                        'max_drawdown': 0.0,
+                        'recovery_factor': 0.0,
+                        'last_updated': now.isoformat(),
                     },
                     'bots': {
                         'total': 0,
                         'active': 0,
-                        'total_profit': 0.0
+                        'total_profit': 0.0,
+                        'entries': []
                     },
                     'system': system_status,
-                    'last_updated': datetime.now()
+                    'telemetry': telemetry,
+                    'last_updated': now.isoformat()
                 }
-            
-            portfolio_summary = await self.portfolio_manager.get_portfolio_summary()
+                self._dashboard_cache = result
+                self._dashboard_cache_ts = now
+                return result
+
+            enhanced_summary = None
+            portfolio_summary = None
+
+            if self.enhanced_portfolio_manager and hasattr(self.enhanced_portfolio_manager, 'get_enhanced_portfolio_summary'):
+                try:
+                    enhanced_summary = await self.enhanced_portfolio_manager.get_enhanced_portfolio_summary()
+                    portfolio_summary = enhanced_summary
+                except Exception as exc:
+                    logger.debug("Enhanced portfolio summary unavailable: %s", exc)
+
+            if portfolio_summary is None:
+                try:
+                    portfolio_summary = await self.portfolio_manager.get_portfolio_summary()
+                except Exception as exc:
+                    logger.warning(f"get_portfolio_summary failed: {exc}")
+                    portfolio_summary = None
+
             dm = getattr(self, 'data_manager', None)
-            bots_data = []
+            bots_data: List[Any] = []
             try:
                 if dm is not None and hasattr(dm, 'get_bots_data'):
-                    bots_data = await dm.get_bots_data()
+                    bots_data = await dm.get_bots_data() or []
             except Exception as e:
                 logger.warning(f"get_bots_data failed, using empty list: {e}")
                 bots_data = []
+
             system_status = await self.get_system_status()
-            
-            return {
-                'portfolio': {
-                    'total_value': portfolio_summary.total_value if portfolio_summary else 0.0,
-                    'daily_change': portfolio_summary.daily_change if portfolio_summary else 0.0,
-                    'daily_change_percent': portfolio_summary.daily_change_percent if portfolio_summary else 0.0,
-                    'profit_loss': portfolio_summary.total_profit_loss if portfolio_summary else 0.0,
-                    'profit_loss_percent': portfolio_summary.total_profit_loss_percent if portfolio_summary else 0.0
-                },
+
+            bot_entries: List[Dict[str, Any]] = []
+            for bot in bots_data[:8]:
+                try:
+                    last_trade = getattr(bot, 'last_trade', None)
+                    if last_trade and hasattr(last_trade, 'isoformat'):
+                        last_trade = last_trade.isoformat()
+                    bot_entries.append({
+                        'id': getattr(bot, 'id', ''),
+                        'name': getattr(bot, 'name', ''),
+                        'status': getattr(bot, 'status', ''),
+                        'active': bool(getattr(bot, 'active', False)),
+                        'profit': float(getattr(bot, 'profit', 0.0) or 0.0),
+                        'profit_percent': float(getattr(bot, 'profit_percent', 0.0) or 0.0),
+                        'trades_count': int(getattr(bot, 'trades_count', 0) or 0),
+                        'last_trade': last_trade,
+                        'risk_level': getattr(bot, 'risk_level', '')
+                    })
+                except Exception as bot_error:
+                    logger.debug(f"Skipping bot entry due to conversion error: {bot_error}")
+
+            portfolio_payload, portfolio_kpis = self._build_portfolio_payload(portfolio_summary, enhanced_summary)
+
+            result = {
+                'portfolio': portfolio_payload,
+                'portfolio_kpis': portfolio_kpis,
                 'bots': {
                     'total': len(bots_data),
                     'active': len([bot for bot in bots_data if getattr(bot, 'active', False)]),
-                    'total_profit': sum(getattr(bot, 'profit', 0.0) for bot in bots_data)
+                    'total_profit': float(sum(getattr(bot, 'profit', 0.0) or 0.0 for bot in bots_data)),
+                    'entries': bot_entries
                 },
                 'system': system_status,
-                'last_updated': datetime.now()
+                'telemetry': telemetry,
+                'last_updated': now.isoformat()
             }
-            
+
+            self._dashboard_cache = result
+            self._dashboard_cache_ts = now
+            return result
+
         except Exception as e:
             logger.error(f"Error getting dashboard data: {e}")
             return {}
@@ -410,6 +511,156 @@ class IntegratedDataManager:
         except Exception as e:
             logger.error(f"Error getting portfolio summary: {e}")
             return None
+
+    def _build_portfolio_payload(self, summary, enhanced_summary):
+        """Buduje dane portfolio oraz dodatkowe KPI na podstawie dostępnych podsumowań."""
+        base_summary = summary or enhanced_summary
+
+        portfolio = {
+            'total_value': self._safe_float(getattr(base_summary, 'total_value', 0.0)),
+            'available_balance': self._safe_float(getattr(base_summary, 'available_balance', 0.0)),
+            'invested_amount': self._safe_float(getattr(base_summary, 'invested_amount', 0.0)),
+            'profit_loss': self._safe_float(getattr(base_summary, 'total_profit_loss', 0.0)),
+            'profit_loss_percent': self._safe_float(getattr(base_summary, 'total_profit_loss_percent', 0.0)),
+            'daily_change': self._safe_float(getattr(base_summary, 'daily_change', 0.0)),
+            'daily_change_percent': self._safe_float(getattr(base_summary, 'daily_change_percent', 0.0)),
+            'weekly_change': self._safe_float(getattr(enhanced_summary, 'weekly_change', 0.0)),
+            'weekly_change_percent': self._safe_float(getattr(enhanced_summary, 'weekly_change_percent', 0.0)),
+            'monthly_change': self._safe_float(getattr(enhanced_summary, 'monthly_change', 0.0)),
+            'monthly_change_percent': self._safe_float(getattr(enhanced_summary, 'monthly_change_percent', 0.0)),
+            'max_drawdown': self._safe_float(getattr(enhanced_summary, 'max_drawdown', 0.0)),
+            'sharpe_ratio': self._safe_float(getattr(enhanced_summary, 'sharpe_ratio', 0.0)),
+            'sortino_ratio': self._safe_float(getattr(enhanced_summary, 'sortino_ratio', 0.0)),
+        }
+
+        portfolio_kpis = {
+            'win_rate': self._safe_float(getattr(enhanced_summary, 'win_rate', 0.0)),
+            'profit_factor': self._safe_float(getattr(enhanced_summary, 'profit_factor', 0.0)),
+            'avg_win': self._safe_float(getattr(enhanced_summary, 'avg_win', 0.0)),
+            'avg_loss': self._safe_float(getattr(enhanced_summary, 'avg_loss', 0.0)),
+            'total_trades': self._safe_int(getattr(enhanced_summary, 'total_trades', 0)),
+            'winning_trades': self._safe_int(getattr(enhanced_summary, 'winning_trades', 0)),
+            'losing_trades': self._safe_int(getattr(enhanced_summary, 'losing_trades', 0)),
+            'total_fees_paid': self._safe_float(getattr(enhanced_summary, 'total_fees_paid', 0.0)),
+            'sharpe_ratio': self._safe_float(getattr(enhanced_summary, 'sharpe_ratio', 0.0)),
+            'sortino_ratio': self._safe_float(getattr(enhanced_summary, 'sortino_ratio', 0.0)),
+            'max_drawdown': self._safe_float(getattr(enhanced_summary, 'max_drawdown', 0.0)),
+            'recovery_factor': self._safe_float(getattr(enhanced_summary, 'recovery_factor', 0.0)),
+            'last_updated': datetime.utcnow().isoformat(),
+        }
+
+        return portfolio, portfolio_kpis
+
+    def _collect_runtime_stats(self) -> Dict[str, Any]:
+        """Agreguje telemetrię runtime z modułu runtime_metrics."""
+        try:
+            from utils import runtime_metrics as rt
+        except Exception as exc:
+            logger.debug(f"Runtime metrics module unavailable: {exc}")
+            return {}
+
+        try:
+            snapshot = rt.snapshot()
+        except Exception as exc:
+            logger.debug(f"Runtime metrics snapshot failed: {exc}")
+            return {}
+
+        latency_summary = snapshot.get('latency_summary') or {}
+        global_latency = latency_summary.get('global') or {}
+        per_exchange_latency = latency_summary.get('per_exchange') or {}
+
+        rate_drops_raw = snapshot.get('rate_drops') or {}
+        circuits_raw = snapshot.get('circuit_open') or {}
+
+        rate_drops_by_exchange: Dict[str, int] = {}
+        for key, count in rate_drops_raw.items():
+            if isinstance(key, tuple) and key:
+                exchange = str(key[0]).lower()
+            else:
+                exchange = str(key).lower()
+            rate_drops_by_exchange[exchange] = rate_drops_by_exchange.get(exchange, 0) + self._safe_int(count)
+
+        open_circuit_by_exchange: Dict[str, int] = {}
+        open_circuits: List[Dict[str, Any]] = []
+        for key, is_open in circuits_raw.items():
+            if not is_open:
+                continue
+            if isinstance(key, tuple) and key:
+                exchange = str(key[0]).lower()
+                endpoint = key[1] if len(key) > 1 else ''
+            else:
+                exchange = str(key).lower()
+                endpoint = ''
+            open_circuit_by_exchange[exchange] = open_circuit_by_exchange.get(exchange, 0) + 1
+            open_circuits.append({'exchange': exchange, 'endpoint': endpoint})
+
+        exchange_rows: List[Dict[str, Any]] = []
+        for exchange, summary in per_exchange_latency.items():
+            exchange_lower = str(exchange).lower()
+            exchange_rows.append({
+                'exchange': exchange_lower,
+                'requests': self._safe_int(summary.get('count', 0)),
+                'p50': self._safe_float(summary.get('p50', 0.0)),
+                'p95': self._safe_float(summary.get('p95', 0.0)),
+                'max': self._safe_float(summary.get('max', 0.0)),
+                'avg': self._safe_float(summary.get('avg', 0.0)),
+                'rate_drops': rate_drops_by_exchange.get(exchange_lower, 0),
+                'open_circuits': open_circuit_by_exchange.get(exchange_lower, 0),
+            })
+
+        exchange_rows.sort(key=lambda entry: entry['p95'], reverse=True)
+
+        orders_total = snapshot.get('orders_total') or {}
+        orders_by_exchange: Dict[str, int] = {}
+        for key, count in orders_total.items():
+            if isinstance(key, tuple) and key:
+                exchange = str(key[0]).lower()
+            else:
+                exchange = str(key).lower()
+            orders_by_exchange[exchange] = orders_by_exchange.get(exchange, 0) + self._safe_int(count)
+
+        telemetry = {
+            'latency': {
+                'global': {
+                    'count': self._safe_int(global_latency.get('count', 0)),
+                    'p50': self._safe_float(global_latency.get('p50', 0.0)),
+                    'p95': self._safe_float(global_latency.get('p95', 0.0)),
+                    'max': self._safe_float(global_latency.get('max', 0.0)),
+                    'avg': self._safe_float(global_latency.get('avg', 0.0)),
+                    'latest': self._safe_float(global_latency.get('latest', 0.0)),
+                },
+                'per_exchange': exchange_rows,
+            },
+            'http_requests': self._safe_int(snapshot.get('http_requests', 0)),
+            'retries': self._safe_int(snapshot.get('retries', 0)),
+            'reconnects': self._safe_int(snapshot.get('reconnects', 0)),
+            'rate_drops_total': sum(rate_drops_by_exchange.values()),
+            'rate_drops_by_exchange': rate_drops_by_exchange,
+            'open_circuit_count': sum(open_circuit_by_exchange.values()),
+            'open_circuits': open_circuits,
+            'orders_by_exchange': orders_by_exchange,
+            'timestamp': datetime.utcnow().isoformat(),
+        }
+
+        return telemetry
+
+    @staticmethod
+    def _safe_float(value, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_int(value, default: int = 0) -> int:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except (TypeError, ValueError):
+            return default
     
     async def get_portfolio_positions(self):
         """Pobiera pozycje portfolio - wymagane przez UpdatedRiskManager"""
@@ -867,8 +1118,15 @@ class IntegratedDataManager:
                         'market_data_connected': getattr(data, 'market_data_connected', False),
                         'trading_engine_ready': getattr(data, 'trading_engine_ready', False),
                         'risk_manager_active': getattr(data, 'risk_manager_active', False),
-                        'last_updated': getattr(data, 'last_updated', datetime.now())
+                        'last_updated': getattr(data, 'last_updated', datetime.now()),
+                        'fail_safe_status': getattr(data, 'fail_safe_status', 'unknown'),
+                        'last_checkpoint': getattr(data, 'last_checkpoint', None),
+                        'requires_attention': getattr(data, 'requires_attention', False),
                     }
+                    if isinstance(payload['last_checkpoint'], datetime):
+                        payload['last_checkpoint'] = payload['last_checkpoint'].isoformat()
+                    if isinstance(payload['last_updated'], datetime):
+                        payload['last_updated'] = payload['last_updated'].isoformat()
                 except Exception:
                     payload = {'error': 'invalid system status payload'}
             
@@ -898,8 +1156,20 @@ class IntegratedDataManager:
         """Pobiera status całego systemu"""
         try:
             # Sprawdź czy data_manager jest dostępny
+            telemetry = self._collect_runtime_stats()
+
             if self.data_manager is None:
                 logger.warning("DataManager is not available - returning basic system status")
+
+                fail_safe_state = {}
+                requires_attention = False
+                if self.fail_safe_manager:
+                    try:
+                        fail_safe_state = await self.fail_safe_manager.record_snapshot({'status': 'degraded'})
+                        requires_attention = self.fail_safe_manager.requires_operator_attention()
+                    except Exception as exc:
+                        logger.debug(f"FailSafeManager snapshot failed: {exc}")
+
                 return SystemStatus(
                     initialized=False,
                     trading_mode="unknown",
@@ -910,9 +1180,12 @@ class IntegratedDataManager:
                     market_data_connected=self.components_ready.get('market_data_manager', False),
                     trading_engine_ready=self.components_ready.get('trading_engine', False),
                     risk_manager_active=False,
-                    last_updated=datetime.now()
+                    last_updated=datetime.now(),
+                    fail_safe_status=fail_safe_state.get('status', 'unknown'),
+                    last_checkpoint=fail_safe_state.get('last_heartbeat'),
+                    requires_attention=requires_attention,
                 )
-            
+
             dm = getattr(self, 'data_manager', None)
             portfolio_data = None
             bots_data = []
@@ -926,7 +1199,24 @@ class IntegratedDataManager:
                     trading_mode = await dm.get_trading_mode()
             except Exception as e:
                 logger.warning(f"DataManager calls failed in get_system_status: {e}")
-            
+
+            active_bot_ids = [getattr(bot, 'id', None) for bot in bots_data if getattr(bot, 'active', False)]
+            fail_safe_state = {}
+            requires_attention = False
+            if self.fail_safe_manager:
+                snapshot_payload = {
+                    'status': 'running',
+                    'trading_mode': trading_mode,
+                    'portfolio_value': getattr(portfolio_data, 'total_value', 0.0) if portfolio_data else 0.0,
+                    'active_bot_ids': [bot_id for bot_id in active_bot_ids if bot_id is not None],
+                    'telemetry': telemetry,
+                }
+                try:
+                    fail_safe_state = await self.fail_safe_manager.record_snapshot(snapshot_payload)
+                    requires_attention = self.fail_safe_manager.requires_operator_attention()
+                except Exception as exc:
+                    logger.debug(f"FailSafeManager snapshot failed: {exc}")
+
             return SystemStatus(
                 initialized=self.initialized,
                 trading_mode=trading_mode,
@@ -937,7 +1227,10 @@ class IntegratedDataManager:
                 market_data_connected=self.components_ready['market_data_manager'],
                 trading_engine_ready=self.components_ready['trading_engine'],
                 risk_manager_active=True,  # Będzie aktualizowane gdy RiskManager będzie gotowy
-                last_updated=datetime.now()
+                last_updated=datetime.now(),
+                fail_safe_status=fail_safe_state.get('status', 'running'),
+                last_checkpoint=fail_safe_state.get('last_heartbeat') or fail_safe_state.get('updated_at'),
+                requires_attention=requires_attention,
             )
             
         except Exception as e:
@@ -1160,28 +1453,72 @@ class IntegratedDataManager:
             # Import bot manager
             from .updated_bot_manager import get_updated_bot_manager
             bot_manager = get_updated_bot_manager()
-            
-            if bot_manager:
-                # Konwertuj konfigurację na odpowiedni format
-                from .updated_bot_manager import BotType
-                
-                bot_type = BotType.DCA if bot_config.get('strategy') == 'DCA' else BotType.GRID
-                
-                bot_id = await bot_manager.create_bot(
-                    name=bot_config['name'],
+
+            if not bot_manager:
+                logger.error("UpdatedBotManager unavailable – cannot persist bot config")
+                return False
+
+            from .updated_bot_manager import BotType
+
+            strategy_key = str(bot_config.get('strategy') or bot_config.get('type') or 'custom').lower()
+            strategy_mapping = {
+                'dca': BotType.DCA,
+                'grid': BotType.GRID,
+                'scalping': BotType.SCALPING,
+                'ai': BotType.AI,
+                'custom': BotType.CUSTOM,
+            }
+            bot_type = strategy_mapping.get(strategy_key, BotType.CUSTOM)
+
+            parameters: Dict[str, Any] = {}
+            parameters.update(bot_config.get('parameters') or bot_config.get('strategy_settings') or {})
+
+            trading_settings = bot_config.get('trading_settings') or {}
+            if trading_settings:
+                parameters.setdefault('trading_settings', trading_settings)
+
+            symbol = bot_config.get('symbol') or bot_config.get('pair')
+            if bot_type == BotType.DCA:
+                if 'buy_amount' not in parameters and 'amount' in trading_settings:
+                    parameters['buy_amount'] = trading_settings['amount']
+                if 'interval_minutes' not in parameters and 'interval' in trading_settings:
+                    parameters['interval_minutes'] = trading_settings['interval']
+            if bot_type == BotType.SCALPING:
+                if 'profit_target' not in parameters and 'take_profit' in trading_settings:
+                    parameters['profit_target'] = trading_settings['take_profit']
+                if 'stop_loss' not in parameters and 'stop_loss' in trading_settings:
+                    parameters['stop_loss'] = trading_settings['stop_loss']
+            if bot_type == BotType.AI:
+                parameters.setdefault('pair', symbol)
+                if 'budget' not in parameters and 'amount' in trading_settings:
+                    parameters['budget'] = trading_settings['amount']
+
+            risk_settings = bot_config.get('risk_settings') or {}
+
+            bot_id = bot_config.get('id')
+            if bot_id:
+                success = await bot_manager.update_bot(
+                    bot_id,
+                    name=bot_config.get('name'),
                     bot_type=bot_type,
-                    symbol=bot_config['symbol'],
-                    parameters={
-                        'position_size': bot_config.get('position_size', 100.0),
-                        'stop_loss': bot_config.get('stop_loss', 5.0),
-                        'take_profit': bot_config.get('take_profit', 10.0)
-                    },
-                    risk_settings={}
+                    symbol=symbol,
+                    parameters=parameters,
+                    risk_settings=risk_settings,
                 )
-                
-                logger.info(f"Bot created with ID: {bot_id}")
-                return True
-            return False
+                if success:
+                    logger.info("Bot %s updated", bot_id)
+                return success
+
+            created_id = await bot_manager.create_bot(
+                name=bot_config['name'],
+                bot_type=bot_type,
+                symbol=symbol,
+                parameters=parameters,
+                risk_settings=risk_settings,
+            )
+
+            logger.info(f"Bot created with ID: {created_id}")
+            return True
         except Exception as e:
             logger.error(f"Error creating bot: {e}")
             return False

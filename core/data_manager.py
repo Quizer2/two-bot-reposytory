@@ -14,6 +14,8 @@ from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 import ast
 
+from core.database_manager import DatabaseManager as AppDatabaseManager
+
 # Konfiguracja logowania
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -175,10 +177,14 @@ class DataManager:
         self.db_helper = DatabaseTransactionHelper(db_path)
         self._initialized = False
         self._init_lock = threading.Lock()
-        
+
         # Konfiguracja z zmiennych środowiskowych
         self.use_real_data = os.getenv('USE_REAL_DATA', 'false').lower() == 'true'
         self.cache_enabled = os.getenv('CACHE_ENABLED', 'true').lower() == 'true'
+
+        # Mostek do asynchronicznego DatabaseManagera (app.database)
+        self._app_db_manager: Optional[AppDatabaseManager] = None
+        self._app_db_lock = asyncio.Lock()
         
     async def ensure_initialized(self):
         """Zapewnia, że DataManager jest zainicjalizowany"""
@@ -296,6 +302,34 @@ class DataManager:
         if self.cache_enabled:
             self.cache[cache_key] = data
             self.last_cache_update[cache_key] = datetime.now()
+
+    async def _get_app_database(self) -> Optional[AppDatabaseManager]:
+        """Lazy inicjalizacja DatabaseManagera z warstwy aplikacyjnej."""
+        if self._app_db_manager is not None:
+            return self._app_db_manager
+        async with self._app_db_lock:
+            if self._app_db_manager is None:
+                try:
+                    manager = AppDatabaseManager()
+                    await manager.initialize()
+                    self._app_db_manager = manager
+                except Exception as exc:
+                    logger.error(f"Nie można zainicjalizować DatabaseManager: {exc}")
+                    return None
+        return self._app_db_manager
+
+    async def _resolve_default_user_id(self) -> Optional[int]:
+        """Próbuje ustalić identyfikator użytkownika dla ustawień globalnych."""
+        app_db = await self._get_app_database()
+        if app_db is None:
+            return None
+        try:
+            user = await app_db.get_first_user()
+            if user and user.get('id') is not None:
+                return int(user['id'])
+        except Exception as exc:
+            logger.debug(f"Nie udało się ustalić domyślnego użytkownika: {exc}")
+        return None
 
     async def get_portfolio_data(self) -> PortfolioData:
         """Pobiera dane portfolio"""
@@ -1035,12 +1069,17 @@ class DataManager:
             cache_key = "trading_mode"
             if self._is_cache_valid(cache_key):
                 return self.cache[cache_key]
-            
-            # TODO: Pobierz z bazy danych
-            mode = "manual"  # Domyślny tryb
+
+            app_db = await self._get_app_database()
+            user_id = await self._resolve_default_user_id()
+            mode = None
+            if app_db is not None:
+                mode = await app_db.get_trading_mode(user_id=user_id)
+            if not mode:
+                mode = "manual"
             self._update_cache(cache_key, mode)
             return mode
-            
+
         except Exception as e:
             logger.error(f"Error getting trading mode: {e}")
             return "manual"
@@ -1051,13 +1090,16 @@ class DataManager:
             valid_modes = ["manual", "auto", "semi-auto"]
             if mode not in valid_modes:
                 raise ValueError(f"Invalid trading mode: {mode}")
-            
-            # TODO: Zapisz do bazy danych
-            
+
+            app_db = await self._get_app_database()
+            user_id = await self._resolve_default_user_id()
+            if app_db is not None:
+                await app_db.set_trading_mode(mode, user_id=user_id)
+
             # Aktualizuj cache
             self._update_cache("trading_mode", mode)
             logger.info(f"Trading mode set to: {mode}")
-            
+
         except Exception as e:
             logger.error(f"Error setting trading mode: {e}")
 
@@ -1067,19 +1109,24 @@ class DataManager:
             cache_key = "risk_settings"
             if self._is_cache_valid(cache_key):
                 return self.cache[cache_key]
-            
-            # TODO: Pobierz z bazy danych
-            settings = {
-                "max_risk_per_trade": 2.0,
-                "max_daily_loss": 5.0,
-                "stop_loss_percent": 3.0,
-                "take_profit_percent": 6.0,
-                "max_open_positions": 5
-            }
-            
+
+            app_db = await self._get_app_database()
+            user_id = await self._resolve_default_user_id()
+            settings: Dict[str, Any] = {}
+            if app_db is not None:
+                settings = await app_db.get_risk_settings_config(user_id=user_id)
+            if not settings:
+                settings = {
+                    "max_risk_per_trade": 2.0,
+                    "max_daily_loss": 5.0,
+                    "stop_loss_percent": 3.0,
+                    "take_profit_percent": 6.0,
+                    "max_open_positions": 5
+                }
+
             self._update_cache(cache_key, settings)
             return settings
-            
+
         except Exception as e:
             logger.error(f"Error getting risk settings: {e}")
             return {}
@@ -1087,12 +1134,15 @@ class DataManager:
     async def update_risk_settings(self, settings: Dict[str, Any]):
         """Aktualizuje ustawienia ryzyka"""
         try:
-            # TODO: Walidacja i zapis do bazy danych
-            
+            app_db = await self._get_app_database()
+            user_id = await self._resolve_default_user_id()
+            if app_db is not None:
+                await app_db.save_risk_settings_config(settings, user_id=user_id)
+
             # Aktualizuj cache
             self._update_cache("risk_settings", settings)
             logger.info("Risk settings updated")
-            
+
         except Exception as e:
             logger.error(f"Error updating risk settings: {e}")
 

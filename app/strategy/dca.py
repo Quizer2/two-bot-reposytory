@@ -439,16 +439,68 @@ class DCAStrategy:
     async def _load_order_history(self):
         """Ładuje historię zleceń z bazy danych"""
         try:
-            # TODO: Implementuj ładowanie z bazy danych
-            pass
+            if not self.db_manager or not self.bot_id:
+                return
+
+            try:
+                bot_id = int(self.bot_id)
+            except (TypeError, ValueError):
+                self.logger.warning("Nie można załadować historii zleceń - bot_id nie jest liczbą")
+                return
+
+            records = await self.db_manager.list_strategy_orders(bot_id, limit=200)
+            if not records:
+                records = await self.db_manager.get_bot_orders(bot_id)
+
+            history: List[DCAOrder] = []
+            for record in records:
+                payload = record.get('payload') if isinstance(record, dict) else {}
+                if payload is None:
+                    payload = {}
+                timestamp_raw = payload.get('timestamp') or record.get('created_at') or record.get('timestamp')
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_raw) if timestamp_raw else datetime.utcnow()
+                except Exception:
+                    timestamp = datetime.utcnow()
+                amount = float(payload.get('amount') or record.get('amount') or 0.0)
+                price = float(payload.get('price') or record.get('price') or 0.0)
+                status = payload.get('status') or record.get('status') or 'pending'
+                order = DCAOrder(
+                    id=str(record.get('order_id') or record.get('id') or f"order_{len(history)}"),
+                    timestamp=timestamp,
+                    pair=payload.get('pair') or self.parameters.get('pair'),
+                    amount=amount,
+                    price=price,
+                    status=status,
+                    exchange_order_id=record.get('exchange_order_id'),
+                    error_message=record.get('error_message'),
+                )
+                history.append(order)
+
+            self.orders = history
         except Exception as e:
             self.logger.error(f"Error loading order history: {e}")
-    
+
     async def _save_order_to_db(self, order: DCAOrder):
         """Zapisuje zlecenie do bazy danych"""
         try:
-            # TODO: Implementuj zapis do bazy danych
-            pass
+            if not self.db_manager or not self.bot_id:
+                return
+            try:
+                bot_id = int(self.bot_id)
+            except (TypeError, ValueError):
+                self.logger.warning("Nie można zapisać zlecenia - bot_id nie jest liczbą")
+                return
+
+            payload = {
+                'pair': order.pair,
+                'amount': order.amount,
+                'price': order.price,
+                'status': order.status,
+                'timestamp': order.timestamp.isoformat(),
+                'exchange_order_id': order.exchange_order_id,
+            }
+            await self.db_manager.upsert_strategy_order(bot_id, order.id, payload, order.status)
         except Exception as e:
             self.logger.error(f"Error saving order to database: {e}")
     
@@ -518,47 +570,40 @@ class DCAStrategy:
     async def load_state(self):
         """Załadowanie stanu bota z bazy danych"""
         try:
-            if not self.bot_id:
+            if not self.bot_id or not self.db_manager:
                 return
-            
-            # Pobranie historii zleceń
-            orders = await self.db_manager.get_bot_orders(self.bot_id)
-            
-            total_buy_cost = 0.0
-            total_buy_amount = 0.0
-            total_sell_amount = 0.0
-            
-            for order in orders:
-                if order['side'] == 'buy' and order['status'] == 'filled':
-                    cost = order['amount'] * order['price']
-                    total_buy_cost += cost
-                    total_buy_amount += order['amount']
-                    self.position_count += 1
-                    
-                    # Aktualizacja czasu ostatniego zakupu
-                    order_time = datetime.fromisoformat(order['timestamp'])
-                    if not self.last_purchase_time or order_time > self.last_purchase_time:
-                        self.last_purchase_time = order_time
-                        
-                elif order['side'] == 'sell' and order['status'] == 'filled':
-                    total_sell_amount += order['amount']
-            
-            # Obliczenie aktualnej pozycji
-            self.total_amount = total_buy_amount - total_sell_amount
-            self.total_invested = total_buy_cost * (self.total_amount / total_buy_amount) if total_buy_amount > 0 else 0
-            self.average_price = total_buy_cost / total_buy_amount if total_buy_amount > 0 else 0
-            
-            self.logger.info(f"Załadowano stan DCA Bot: pozycja {self.total_amount}, średnia cena {self.average_price}")
-            
+
+            try:
+                bot_id = int(self.bot_id)
+            except (TypeError, ValueError):
+                self.logger.warning("Nie można załadować stanu strategii - bot_id nie jest liczbą")
+                return
+
+            state_record = await self.db_manager.fetch_strategy_state(bot_id)
+            state_payload = (state_record or {}).get('state', {})
+            if state_payload:
+                self.total_invested = float(state_payload.get('total_invested', self.total_invested))
+                self.total_amount = float(state_payload.get('total_amount', self.total_amount))
+                self.average_price = float(state_payload.get('average_price', self.average_price))
+                self.position_count = int(state_payload.get('position_count', self.position_count))
+                last_purchase = state_payload.get('last_purchase_time')
+                if last_purchase:
+                    try:
+                        self.last_purchase_time = datetime.fromisoformat(last_purchase)
+                    except Exception:
+                        pass
+
+            await self._load_order_history()
+
         except Exception as e:
             self.logger.error(f"Błąd podczas ładowania stanu: {e}")
-    
+
     async def save_state(self):
         """Zapisanie stanu bota"""
         try:
-            if not self.bot_id:
+            if not self.bot_id or not self.db_manager:
                 return
-            
+
             # Aktualizacja parametrów w bazie danych
             parameters = {
                 'amount': self.amount,
@@ -571,8 +616,22 @@ class DCAStrategy:
                 'average_price': self.average_price,
                 'position_count': self.position_count
             }
-            
+
             await self.db_manager.update_bot_parameters(self.bot_id, parameters)
-            
+
+            try:
+                bot_id = int(self.bot_id)
+            except (TypeError, ValueError):
+                return
+
+            state_payload = {
+                'total_invested': self.total_invested,
+                'total_amount': self.total_amount,
+                'average_price': self.average_price,
+                'position_count': self.position_count,
+                'last_purchase_time': self.last_purchase_time.isoformat() if self.last_purchase_time else None,
+            }
+            await self.db_manager.persist_strategy_state(bot_id, 'dca', state_payload)
+
         except Exception as e:
             self.logger.error(f"Błąd podczas zapisywania stanu: {e}")

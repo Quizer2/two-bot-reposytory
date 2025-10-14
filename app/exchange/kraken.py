@@ -457,6 +457,7 @@ class KrakenExchange(BaseExchange):
                 'error': str(e)
             }
 
+    @net_guard('exchange:cancel_order')
     async def cancel_order(self, order_id: str, pair: str) -> bool:
         """Anuluj zlecenie"""
         try:
@@ -511,6 +512,7 @@ class KrakenExchange(BaseExchange):
             self.logger.error(f"Błąd sprawdzania statusu zlecenia Kraken: {e}", exc_info=True)
             return None
     
+    @net_guard('exchange:get_open_orders')
     async def get_open_orders(self, symbol: str = None) -> List[Dict]:
         """Pobierz otwarte zlecenia"""
         try:
@@ -548,6 +550,7 @@ class KrakenExchange(BaseExchange):
             self.logger.error(f"Błąd pobierania otwartych zleceń Kraken: {e}", exc_info=True)
             return []
     
+    @net_guard('exchange:get_trade_history')
     async def get_trade_history(self, symbol: str = None, limit: int = 100) -> List[Dict]:
         """Pobierz historię transakcji"""
         try:
