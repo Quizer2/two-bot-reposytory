@@ -151,6 +151,9 @@ class EventTypes:
     DATA_UPDATED = "data.updated"
     RATE_LIMIT_WARNING = "rate.limit.warning"
     RATE_LIMIT_BLOCKED = "rate.limit.blocked"
+    RISK_ALERT = "risk.alert"
+    RISK_ESCALATION = "risk.escalation"
+    AI_SNAPSHOT_READY = "ai.snapshot.ready"
 
 from typing import Union
 try:

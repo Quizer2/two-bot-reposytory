@@ -12,3 +12,7 @@ aiosqlite
 pytest
 pytest-asyncio
 prometheus-client
+# Optional production dependencies (live trading / packaging)
+ccxt
+websocket-client
+PyInstaller

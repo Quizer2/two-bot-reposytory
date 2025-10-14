@@ -1,13 +1,18 @@
-"""Simplified Bybit adapter."""
+"""Bybit adapter delegating to the configured implementation."""
 
 from __future__ import annotations
 
-from .base_simulated_adapter import SimulatedExchangeAdapter
+from typing import Any
+
+from .adapter_factory import create_exchange_adapter
 
 
-class BybitAdapter(SimulatedExchangeAdapter):
-    def __init__(self) -> None:
-        super().__init__('bybit', base_price=48000.0)
+class BybitAdapter:
+    def __init__(self, *, mode: str | None = None, **kwargs: Any) -> None:
+        self._delegate = create_exchange_adapter("bybit", mode=mode, **kwargs)
+
+    def __getattr__(self, item: str):
+        return getattr(self._delegate, item)
 
 
-__all__ = ['BybitAdapter']
+__all__ = ["BybitAdapter"]

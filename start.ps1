@@ -25,7 +25,7 @@ function Write-ColorOutput {
 
 function Show-Help {
     Write-ColorOutput "CryptoBotDesktop v1.0.0 - Skrypt uruchomieniowy" $InfoColor
-    Write-ColorOutput "================================================" $InfoColor
+    Write-ColorOutput "== == == == == == == == == == == == == == == == == == ==" $InfoColor
     Write-Host ""
     Write-Host "Użycie:"
     Write-Host "  .\start.ps1                 # Uruchom aplikację"
@@ -158,7 +158,7 @@ function Initialize-Directories {
 
 function Start-Application {
     Write-ColorOutput "Uruchamianie CryptoBotDesktop..." $InfoColor
-    Write-ColorOutput "================================" $InfoColor
+    Write-ColorOutput "== == == == == == == == == == == == == == == == == ==" $InfoColor
     Write-Host ""
     
     try {
@@ -166,15 +166,15 @@ function Start-Application {
         
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""
-            Write-ColorOutput "================================" $InfoColor
+            Write-ColorOutput "== == == == == == == == == == == == == == == == == ==" $InfoColor
             Write-ColorOutput "Aplikacja zakończona pomyślnie" $SuccessColor
-            Write-ColorOutput "================================" $InfoColor
+            Write-ColorOutput "== == == == == == == == == == == == == == == == == ==" $InfoColor
         } else {
             Write-Host ""
-            Write-ColorOutput "================================" $ErrorColor
+            Write-ColorOutput "== == == == == == == == == == == == == == == == == ==" $ErrorColor
             Write-ColorOutput "Aplikacja zakończona z błędem!" $ErrorColor
             Write-ColorOutput "Sprawdź logi w katalogu logs\" $InfoColor
-            Write-ColorOutput "================================" $ErrorColor
+            Write-ColorOutput "== == == == == == == == == == == == == == == == == ==" $ErrorColor
         }
     }
     catch {
@@ -189,7 +189,7 @@ if ($Help) {
 
 Write-ColorOutput "🚀 CryptoBotDesktop v1.0.0" $InfoColor
 Write-ColorOutput "Zaawansowany bot do handlu kryptowalutami" $InfoColor
-Write-ColorOutput "=========================================" $InfoColor
+Write-ColorOutput "== == == == == == == == == == == == == == == == == == == ==" $InfoColor
 Write-Host ""
 
 # Sprawdzenie środowiska

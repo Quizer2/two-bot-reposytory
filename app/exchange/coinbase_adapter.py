@@ -1,13 +1,18 @@
-"""Simplified Coinbase adapter."""
+"""Coinbase adapter delegating to live/simulated factory."""
 
 from __future__ import annotations
 
-from .base_simulated_adapter import SimulatedExchangeAdapter
+from typing import Any
+
+from .adapter_factory import create_exchange_adapter
 
 
-class CoinbaseAdapter(SimulatedExchangeAdapter):
-    def __init__(self) -> None:
-        super().__init__('coinbase', base_price=49500.0)
+class CoinbaseAdapter:
+    def __init__(self, *, mode: str | None = None, **kwargs: Any) -> None:
+        self._delegate = create_exchange_adapter("coinbase", mode=mode, **kwargs)
+
+    def __getattr__(self, item: str):
+        return getattr(self._delegate, item)
 
 
-__all__ = ['CoinbaseAdapter']
+__all__ = ["CoinbaseAdapter"]

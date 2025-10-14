@@ -52,10 +52,10 @@
     "default_stop_loss_percent": 5.0,
     "default_take_profit_percent": 10.0,
     "max_open_positions": 10,
-    "paper_trading": false,
+    "paper_trading": true,
     "slippage_tolerance_percent": 0.5,
     "enabled": true,
-    "mode": "live",
+    "mode": "auto",
     "default_exchange": "coinbase",
     "updated_at": "2025-09-30T20:19:47.662321",
     "risk_management": {
@@ -89,7 +89,8 @@
         }
       },
       "updated_at": "2025-10-13T19:32:36.139118"
-    }
+    },
+    "default_mode": "paper"
   },
   "test_section": {
     "test_value": "test_data",

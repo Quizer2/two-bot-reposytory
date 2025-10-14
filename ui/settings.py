@@ -7,7 +7,7 @@ i ogólnych ustawień aplikacji.
 
 import sys
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
 import json
 
@@ -65,7 +65,7 @@ except ImportError:
         def __init__(self, text="", parent=None): pass
         def clicked(self): return lambda: None
         def connect(self, func): pass
-    
+
     class QFrame(QWidget): pass
     class QScrollArea(QWidget): pass
     class QTabWidget(QWidget): pass
@@ -74,33 +74,52 @@ except ImportError:
         def setEditable(self, editable): pass
         def currentText(self): return ""
         def setCurrentText(self, text): pass
-    
+
     class QLineEdit(QWidget):
         def setPlaceholderText(self, text): pass
         def text(self): return ""
         def setText(self, text): pass
         def setEchoMode(self, mode): pass
         EchoMode = type('EchoMode', (), {'Password': 0})()
-    
+
     class QSpinBox(QWidget):
         def setRange(self, min_val, max_val): pass
         def setValue(self, value): pass
         def value(self): return 0
-    
+
     class QDoubleSpinBox(QWidget):
         def setRange(self, min_val, max_val): pass
         def setValue(self, value): pass
         def setSuffix(self, suffix): pass
         def value(self): return 0.0
-    
+
     class QCheckBox(QWidget):
         def __init__(self, text="", parent=None): pass
         def setChecked(self, checked): pass
         def isChecked(self): return False
         def setEnabled(self, enabled): pass
-    
+
     class QGroupBox(QWidget):
         def __init__(self, title="", parent=None): pass
+
+    class QRadioButton(QCheckBox):
+        def __init__(self, text="", parent=None): pass
+        def setChecked(self, checked): pass
+        def isChecked(self): return False
+
+    class QDialog(QWidget):
+        class DialogCode:
+            Accepted = 1
+            Rejected = 0
+
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+        def accept(self):
+            pass
+
+        def reject(self):
+            pass
     
     class QListWidget(QWidget):
         def clear(self): pass
@@ -138,6 +157,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.config_manager import get_config_manager, get_ui_setting, get_app_setting
 from utils.logger import get_logger
 from utils.helpers import FormatHelper
+from utils import master_password
 
 # Import ApiConfigManager
 try:
@@ -146,6 +166,75 @@ try:
 except ImportError:
     API_CONFIG_AVAILABLE = False
     print("ApiConfigManager not available")
+
+class MasterPasswordDialog(QDialog):
+    """Modal dialog asking user for master password (setup or verify)."""
+
+    def __init__(self, mode: str = "verify", parent=None):
+        super().__init__(parent)
+        self._password: Optional[str] = None
+        self.mode = mode
+
+        if not PYQT_AVAILABLE:
+            return
+
+        title = "Ustaw hasło główne" if mode == "setup" else "Podaj hasło główne"
+        self.setWindowTitle(title)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.password_edit = QLineEdit()
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        form.addRow("Hasło:", self.password_edit)
+
+        if mode == "setup":
+            self.confirm_edit = QLineEdit()
+            self.confirm_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            form.addRow("Potwierdź hasło:", self.confirm_edit)
+        else:
+            self.confirm_edit = None
+
+        layout.addLayout(form)
+
+        buttons_layout = QHBoxLayout()
+        ok_btn = QPushButton("Zapisz" if mode == "setup" else "Potwierdź")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Anuluj")
+        cancel_btn.clicked.connect(self.reject)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(ok_btn)
+        buttons_layout.addWidget(cancel_btn)
+        layout.addLayout(buttons_layout)
+
+    @staticmethod
+    def get_password(parent=None, mode: str = "verify") -> Tuple[Optional[str], bool]:
+        if not PYQT_AVAILABLE:
+            return None, False
+        dialog = MasterPasswordDialog(mode, parent)
+        result = dialog.exec()
+        if result == QDialog.DialogCode.Accepted:
+            return dialog._password, True
+        return None, False
+
+    def accept(self):  # type: ignore[override]
+        if not PYQT_AVAILABLE:
+            self._password = None
+            return super().accept()
+
+        password = self.password_edit.text().strip()
+        if not password:
+            QMessageBox.warning(self, "Brak hasła", "Wprowadź hasło główne.")
+            return
+
+        if self.mode == "setup":
+            confirm = (self.confirm_edit.text().strip() if self.confirm_edit else "")
+            if password != confirm:
+                QMessageBox.warning(self, "Niepoprawne potwierdzenie", "Hasła nie są identyczne.")
+                return
+
+        self._password = password
+        super().accept()
+
 
 class ExchangeConfigWidget(QWidget):
     """Widget konfiguracji giełd"""
@@ -159,6 +248,7 @@ class ExchangeConfigWidget(QWidget):
             
         self.exchanges = []
         self.api_config_manager = None
+        self._updating_mode = False
         
         # Inicjalizuj ApiConfigManager jeśli dostępny
         if API_CONFIG_AVAILABLE:
@@ -224,8 +314,20 @@ class ExchangeConfigWidget(QWidget):
         actions_layout.addWidget(delete_btn)
         
         actions_layout.addStretch()
-        
+
         layout.addLayout(actions_layout)
+
+        mode_group = QGroupBox("Tryb handlu")
+        mode_layout = QHBoxLayout(mode_group)
+        self.paper_mode_radio = QRadioButton("Paper Trading")
+        self.live_mode_radio = QRadioButton("Live Trading")
+        if PYQT_AVAILABLE:
+            self.paper_mode_radio.toggled.connect(self._handle_trading_mode_toggle)
+            self.live_mode_radio.toggled.connect(self._handle_trading_mode_toggle)
+        mode_layout.addWidget(self.paper_mode_radio)
+        mode_layout.addWidget(self.live_mode_radio)
+        mode_layout.addStretch()
+        layout.addWidget(mode_group)
     
     def load_exchanges(self):
         """Ładuje listę giełd"""
@@ -249,35 +351,39 @@ class ExchangeConfigWidget(QWidget):
                     exchange_data = {
                         'name': exchange_name.title(),
                         'api_key': config.get('api_key', ''),
-                        'api_secret': '***' if has_secret else '',
+                        'api_secret': config.get('secret', ''),
+                        'display_secret': '***' if has_secret else '',
                         'passphrase': config.get('passphrase', ''),
                         'testnet': config.get('sandbox', True),
                         'enabled': is_enabled,
-                        'status': status
+                        'status': status,
+                        'options': config.get('options', {}),
                     }
-                    
+
                     self.exchanges.append(exchange_data)
                     
             except Exception as e:
                 print(f"Error loading exchanges: {e}")
                 # Fallback do przykładowych danych
                 self.exchanges = [
-                    {'name': 'Binance', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                    {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                    {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                    {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'}
+                    {'name': 'Binance', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                    {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                    {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                    {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}}
                 ]
         else:
             # Fallback gdy ApiConfigManager nie jest dostępny
             self.exchanges = [
-                {'name': 'Binance', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'},
-                {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected'}
+                {'name': 'Binance', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                {'name': 'Bybit', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                {'name': 'Kucoin', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}},
+                {'name': 'Coinbase', 'api_key': '', 'api_secret': '', 'display_secret': '', 'passphrase': '', 'testnet': True, 'enabled': False, 'status': 'disconnected', 'options': {}}
             ]
         
         self.update_exchanges_list()
-        
+
+        self._load_trading_mode()
+
         # Uruchom sprawdzanie statusu połączeń
         self.check_connection_status()
     
@@ -376,14 +482,16 @@ class ExchangeConfigWidget(QWidget):
             if self.api_config_manager:
                 try:
                     exchange_name = exchange_data['name'].lower()
-                    self.api_config_manager.set_exchange_config(exchange_name, {
+                    ok = self.api_config_manager.set_exchange_config(exchange_name, {
                         'api_key': exchange_data['api_key'],
                         'secret': exchange_data['api_secret'],
                         'passphrase': exchange_data.get('passphrase', ''),
                         'sandbox': exchange_data.get('testnet', True),
-                        'enabled': exchange_data.get('enabled', False)
+                        'enabled': exchange_data.get('enabled', False),
+                        'options': exchange_data.get('options', {}),
                     })
-                    self.api_config_manager.save_config()
+                    if not ok:
+                        QMessageBox.warning(self, "Błąd", "Nie udało się zapisać konfiguracji giełdy.")
                 except Exception as e:
                     print(f"Error saving exchange config: {e}")
             
@@ -398,22 +506,38 @@ class ExchangeConfigWidget(QWidget):
     def edit_exchange(self, item):
         """Edytuje giełdę"""
         exchange_data = item.data(Qt.ItemDataRole.UserRole)
+        if self.api_config_manager:
+            try:
+                exchange_name = exchange_data['name'].lower()
+                cfg = self.api_config_manager.get_exchange_config(exchange_name) or {}
+                exchange_data.update({
+                    'api_key': cfg.get('api_key', ''),
+                    'api_secret': cfg.get('secret', ''),
+                    'passphrase': cfg.get('passphrase', ''),
+                    'testnet': cfg.get('sandbox', exchange_data.get('testnet', True)),
+                    'enabled': cfg.get('enabled', exchange_data.get('enabled', False)),
+                    'options': cfg.get('options', exchange_data.get('options', {})),
+                })
+            except Exception as e:
+                print(f"Error loading exchange config for edit: {e}")
         dialog = ExchangeDialog(self, exchange_data, api_config_manager=self.api_config_manager)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             updated_data = dialog.get_exchange_data()
-            
+
             # Zapisz do ApiConfigManager jeśli dostępny
             if self.api_config_manager:
                 try:
                     exchange_name = updated_data['name'].lower()
-                    self.api_config_manager.set_exchange_config(exchange_name, {
+                    ok = self.api_config_manager.set_exchange_config(exchange_name, {
                         'api_key': updated_data['api_key'],
                         'secret': updated_data['api_secret'],
                         'passphrase': updated_data.get('passphrase', ''),
                         'sandbox': updated_data.get('testnet', True),
-                        'enabled': updated_data.get('enabled', False)
+                        'enabled': updated_data.get('enabled', False),
+                        'options': updated_data.get('options', {}),
                     })
-                    self.api_config_manager.save_config()
+                    if not ok:
+                        QMessageBox.warning(self, "Błąd", "Nie udało się zaktualizować konfiguracji giełdy.")
                 except Exception as e:
                     print(f"Error updating exchange config: {e}")
             
@@ -438,12 +562,85 @@ class ExchangeConfigWidget(QWidget):
                 return
             
             # Symulacja testu połączenia - w przyszłości można zintegrować z ProductionDataManager
-            QMessageBox.information(self, "Test Połączenia", 
+            QMessageBox.information(self, "Test Połączenia",
                                   f"Testowanie połączenia z {exchange_data['name']}...\n"
                                   "Połączenie udane! ✅\n\n"
                                   "Uwaga: To jest symulacja testu.\n"
                                   "Prawdziwy test będzie dostępny po pełnej integracji.")
-    
+
+    def _load_trading_mode(self):
+        if not PYQT_AVAILABLE:
+            return
+        config_manager = get_config_manager()
+        current_mode = config_manager.get_setting('app', 'trading.default_mode', 'paper')
+        paper_flag = bool(config_manager.get_setting('app', 'trading.paper_trading', current_mode != 'live'))
+        self._updating_mode = True
+        try:
+            if current_mode == 'live' and not paper_flag:
+                self.live_mode_radio.setChecked(True)
+            else:
+                self.paper_mode_radio.setChecked(True)
+        finally:
+            self._updating_mode = False
+
+    def _handle_trading_mode_toggle(self):
+        if not PYQT_AVAILABLE or self._updating_mode:
+            return
+        self._updating_mode = True
+        try:
+            if self.paper_mode_radio.isChecked():
+                self._set_trading_mode('paper')
+            elif self.live_mode_radio.isChecked():
+                self._set_trading_mode('live')
+        finally:
+            self._updating_mode = False
+
+    def _set_trading_mode(self, mode: str) -> None:
+        config_manager = get_config_manager()
+        if mode == 'paper':
+            config_manager.set_setting(
+                'app',
+                'trading.paper_trading',
+                True,
+                meta={'source': 'ui', 'context': 'exchange_settings'},
+            )
+            config_manager.set_setting(
+                'app',
+                'trading.default_mode',
+                'paper',
+                meta={'source': 'ui', 'context': 'exchange_settings'},
+            )
+            return
+
+        enabled = []
+        if self.api_config_manager:
+            try:
+                enabled = self.api_config_manager.get_enabled_exchanges()
+            except Exception:
+                enabled = []
+
+        if not enabled:
+            QMessageBox.warning(
+                self,
+                "Brak aktywnych kluczy",
+                "Dodaj i włącz co najmniej jedną giełdę z prawdziwymi kluczami API, aby przejść w tryb live.",
+            )
+            self.paper_mode_radio.setChecked(True)
+            return
+
+        config_manager.set_setting(
+            'app',
+            'trading.paper_trading',
+            False,
+            meta={'source': 'ui', 'context': 'exchange_settings'},
+        )
+        config_manager.set_setting(
+            'app',
+            'trading.default_mode',
+            'live',
+            meta={'source': 'ui', 'context': 'exchange_settings'},
+        )
+
     def delete_exchange(self):
         """Usuwa giełdę"""
         current_item = self.exchanges_list.currentItem()
@@ -459,7 +656,6 @@ class ExchangeConfigWidget(QWidget):
                     try:
                         exchange_name = exchange_data['name'].lower()
                         self.api_config_manager.remove_exchange_config(exchange_name)
-                        self.api_config_manager.save_config()
                     except Exception as e:
                         print(f"Error removing exchange config: {e}")
                 
@@ -478,6 +674,7 @@ class ExchangeDialog(QDialog):
             
         self.exchange_data = exchange_data or {}
         self.api_config_manager = api_config_manager
+        self._session_master_password: Optional[str] = None
         
         try:
             self.setWindowTitle("Konfiguracja Giełdy")
@@ -520,6 +717,11 @@ class ExchangeDialog(QDialog):
         # Testnet
         self.testnet_checkbox = QCheckBox("Użyj Testnet")
         form_layout.addRow("", self.testnet_checkbox)
+
+        # Aktywacja giełdy
+        self.enabled_checkbox = QCheckBox("Aktywuj giełdę i używaj danych live")
+        self.enabled_checkbox.setChecked(True)
+        form_layout.addRow("", self.enabled_checkbox)
         
         layout.addLayout(form_layout)
         
@@ -568,7 +770,56 @@ class ExchangeDialog(QDialog):
             self.api_secret_edit.setText(self.exchange_data.get('api_secret', ''))
             self.passphrase_edit.setText(self.exchange_data.get('passphrase', ''))
             self.testnet_checkbox.setChecked(self.exchange_data.get('testnet', False))
-    
+            self.enabled_checkbox.setChecked(self.exchange_data.get('enabled', True))
+
+    def _obtain_master_password(self) -> Tuple[Optional[str], bool]:
+        if not PYQT_AVAILABLE:
+            return None, True
+        if not self.api_config_manager:
+            return None, True
+        requires_security = any([
+            self.api_key_edit.text().strip(),
+            self.api_secret_edit.text().strip(),
+            self.passphrase_edit.text().strip(),
+        ])
+        if not requires_security:
+            return None, True
+
+        try:
+            if master_password.is_initialized():
+                attempts = 0
+                while True:
+                    password, ok = MasterPasswordDialog.get_password(self, mode="verify")
+                    if not ok:
+                        return None, False
+                    if master_password.verify_master_password(password or ""):
+                        if not self.api_config_manager.initialize_encryption(password or ""):
+                            QMessageBox.warning(self, "Błąd", "Nie udało się zainicjalizować szyfrowania.")
+                            return None, False
+                        return password, True
+                    attempts += 1
+                    QMessageBox.warning(self, "Błędne hasło", "Podano niepoprawne hasło główne.")
+                    if attempts >= 3:
+                        return None, False
+            else:
+                while True:
+                    password, ok = MasterPasswordDialog.get_password(self, mode="setup")
+                    if not ok:
+                        return None, False
+                    if not password:
+                        QMessageBox.warning(self, "Brak hasła", "Hasło nie może być puste.")
+                        continue
+                    master_password.setup_master_password(password)
+                    if not self.api_config_manager.initialize_encryption(password):
+                        QMessageBox.warning(self, "Błąd", "Nie udało się zainicjalizować szyfrowania.")
+                        return None, False
+                    return password, True
+        except Exception as exc:
+            QMessageBox.warning(self, "Błąd", f"Konfiguracja szyfrowania nie powiodła się: {exc}")
+            return None, False
+
+        return None, True
+        
     def get_exchange_data(self) -> Dict:
         """Zwraca dane giełdy z formularza"""
         return {
@@ -577,6 +828,7 @@ class ExchangeDialog(QDialog):
             'api_secret': self.api_secret_edit.text(),
             'passphrase': self.passphrase_edit.text(),
             'testnet': self.testnet_checkbox.isChecked(),
+            'enabled': self.enabled_checkbox.isChecked(),
             'permissions': {
                 'read': self.read_checkbox.isChecked(),
                 'trade': self.trade_checkbox.isChecked(),
@@ -601,11 +853,17 @@ class ExchangeDialog(QDialog):
         if not self.name_combo.currentText():
             QMessageBox.warning(self, "Błąd", "Wybierz giełdę.")
             return
-        
+
         if not self.api_key_edit.text() or not self.api_secret_edit.text():
             QMessageBox.warning(self, "Błąd", "Wprowadź API Key i API Secret.")
             return
-        
+
+        password, proceed = self._obtain_master_password()
+        if not proceed:
+            return
+        if password:
+            self._session_master_password = password
+
         super().accept()
     
     def reject(self):

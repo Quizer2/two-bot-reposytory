@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 🧪 CRYPTOBOTDESKTOP - AUTOMATYCZNY RUNNER TESTÓW
-===============================================
+== == == == == == == == == == == == == == == == == == == ==
 
 Skrypt uruchamiający wszystkie testy aplikacji CryptoBotDesktop
 z automatycznym raportowaniem wyników i analizą problemów.

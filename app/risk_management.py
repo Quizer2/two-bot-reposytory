@@ -4,14 +4,15 @@ Risk Management - Zaawansowany system zarządzania ryzykiem w tradingu
 
 import asyncio
 import json
+import math
+import statistics
 import threading
-from typing import Dict, Optional, Tuple, List, Any, Union, Callable, Coroutine
+from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_DOWN
 from enum import Enum
-from dataclasses import dataclass, asdict
-import statistics
-import math
+from pathlib import Path
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, Union
 
 from utils.logger import get_logger
 from utils.event_bus import get_event_bus, EventTypes
@@ -155,6 +156,8 @@ class RiskManager:
             volatility_threshold=10.0,
             var_limit=500.0
         )
+        self.static_limits_map = self._load_static_limits()
+        self.historical_metrics = self._load_historical_metrics()
         
     async def initialize(self) -> bool:
         """Inicjalizacja managera ryzyka"""
@@ -523,8 +526,11 @@ class RiskManager:
         """Obliczenie Value at Risk (VaR)"""
         try:
             if not self.db_manager:
+                metrics = self._get_static_metrics(bot_id)
+                if metrics:
+                    return metrics.var_95
                 return 0.0
-            
+
             # Symulacja obliczeń VaR (w rzeczywistej implementacji pobieramy dane z bazy)
             # Dla celów demonstracyjnych zwracamy przykładową wartość
             return 100.0
@@ -556,15 +562,59 @@ class RiskManager:
             if self.db_manager:
                 # Symulacja aktualizacji w bazie danych
                 pass
-            
+
             # Aktualizacja cache
             with self._lock:
                 self.limits_cache[bot_id] = limits
-            
+
+            self._persist_limits_to_file(bot_id, limits)
+
             self.logger.info(f"Zaktualizowano limity ryzyka dla bota {bot_id}")
-            
+
+            self.event_bus.publish(
+                EventTypes.CONFIG_RISK_UPDATED,
+                {
+                    'namespace': 'risk',
+                    'meta': {'bot_id': bot_id},
+                    'limits': limits.to_dict(),
+                    'timestamp': datetime.utcnow().isoformat(),
+                },
+            )
+
         except Exception as e:
             self.logger.error(f"Błąd podczas aktualizacji limitów ryzyka: {e}")
+
+    def update_settings(self, settings: Dict[str, Any]) -> None:
+        """Aktualizuje globalne ustawienia zarządzania ryzykiem."""
+        try:
+            new_limits = RiskLimits(
+                daily_loss_limit=float(settings.get('max_daily_loss', self.default_limits.daily_loss_limit)),
+                daily_profit_limit=float(settings.get('max_daily_profit', self.default_limits.daily_profit_limit)),
+                max_drawdown_limit=float(settings.get('max_drawdown', self.default_limits.max_drawdown_limit)),
+                position_size_limit=float(settings.get('max_position_size', self.default_limits.position_size_limit)),
+                max_open_positions=int(settings.get('max_open_positions', self.default_limits.max_open_positions)),
+                max_correlation=float(settings.get('max_correlation', self.default_limits.max_correlation)),
+                volatility_threshold=float(settings.get('volatility_threshold', self.default_limits.volatility_threshold)),
+                var_limit=float(settings.get('var_limit', self.default_limits.var_limit)),
+            )
+
+            with self._lock:
+                self.default_limits = new_limits
+
+            self._persist_limits_to_file(None, new_limits)
+
+            self.event_bus.publish(
+                EventTypes.CONFIG_RISK_UPDATED,
+                {
+                    'namespace': 'risk',
+                    'meta': {'scope': 'default'},
+                    'limits': new_limits.to_dict(),
+                    'timestamp': datetime.utcnow().isoformat(),
+                },
+            )
+
+        except Exception as exc:
+            self.logger.error(f"Błąd podczas aktualizacji ustawień ryzyka: {exc}")
     
     async def get_risk_metrics(self, bot_id: int) -> RiskMetrics:
         """Pobranie metryk ryzyka dla bota"""
@@ -589,9 +639,12 @@ class RiskManager:
         """Obliczenie metryk ryzyka"""
         try:
             if not self.db_manager:
+                metrics = self._get_static_metrics(bot_id)
+                if metrics:
+                    return metrics
                 # Zwróć domyślne metryki jeśli brak bazy danych
                 return RiskMetrics()
-            
+
             # Symulacja obliczeń metryk (w rzeczywistej implementacji pobieramy dane z bazy)
             return RiskMetrics(
                 daily_pnl=0.0,
@@ -729,14 +782,14 @@ class RiskManager:
         except Exception as e:
             self.logger.error(f"Błąd podczas aktualizacji metryk ryzyka: {e}")
     
-    async def _log_risk_event(self, bot_id: int, event_type: RiskEventType, 
+    async def _log_risk_event(self, bot_id: int, event_type: RiskEventType,
                            level: RiskLevel, message: str):
         """Logowanie zdarzenia ryzyka"""
         try:
             if self.db_manager:
                 # Symulacja logowania do bazy danych
                 pass
-            
+
             # Logowanie w konsoli
             if level == RiskLevel.CRITICAL:
                 self.logger.critical(f"Bot {bot_id}: {message}")
@@ -746,7 +799,9 @@ class RiskManager:
                 self.logger.warning(f"Bot {bot_id}: {message}")
             else:
                 self.logger.info(f"Bot {bot_id}: {message}")
-            
+
+            self._publish_risk_event(bot_id, event_type, level, message)
+
         except Exception as e:
             self.logger.error(f"Błąd podczas logowania zdarzenia ryzyka: {e}")
     
@@ -852,6 +907,9 @@ class RiskManager:
         """Ładowanie limitów ryzyka z bazy danych"""
         try:
             if not self.db_manager:
+                fallback = self._get_static_limit(bot_id)
+                if fallback:
+                    return fallback
                 self.logger.warning("Brak db_manager - używam domyślnych limitów")
                 return self.default_limits
 
@@ -876,6 +934,11 @@ class RiskManager:
                     self.limits_cache[bot_id] = limits
                 self.logger.info("Załadowano limity z bazy danych dla bota %s", bot_id)
                 return limits
+
+            fallback = self._get_static_limit(bot_id)
+            if fallback:
+                self.logger.info("Brak limitów w bazie dla bota %s - używam statycznych", bot_id)
+                return fallback
 
             self.logger.info("Brak limitów w bazie dla bota %s - używam domyślnych", bot_id)
             with self._lock:
@@ -1073,6 +1136,196 @@ class RiskManager:
             return risk_root
 
         return {}
+
+    def _publish_risk_event(
+        self,
+        bot_id: int,
+        event_type: RiskEventType,
+        level: RiskLevel,
+        message: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            payload = {
+                'bot_id': bot_id,
+                'event_type': event_type.value,
+                'level': level.value,
+                'message': message,
+                'timestamp': datetime.utcnow().isoformat(),
+            }
+            if extra:
+                payload.update(extra)
+            self.event_bus.publish(EventTypes.RISK_ALERT, payload)
+            if level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
+                self.event_bus.publish(EventTypes.RISK_ESCALATION, payload)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.logger.error("Błąd podczas publikacji zdarzenia ryzyka: %s", exc)
+
+    def _persist_limits_to_file(self, bot_id: Optional[int], limits: RiskLimits) -> None:
+        """Zapisuje limity ryzyka do pliku konfiguracji."""
+        try:
+            path = Path("config/risk_limits.json")
+            data: Dict[str, Any] = {"default": self.default_limits.to_dict(), "bots": {}}
+            if path.exists():
+                try:
+                    with path.open("r", encoding="utf-8") as handle:
+                        loaded = json.load(handle)
+                    if isinstance(loaded, dict):
+                        data.update(loaded)
+                except Exception as exc:
+                    self.logger.warning("Nie można odczytać istniejącego pliku limitów: %s", exc)
+
+            bots_section = data.get("bots")
+            if not isinstance(bots_section, dict):
+                bots_section = {}
+
+            if bot_id is None:
+                data["default"] = limits.to_dict()
+            else:
+                bots_section[str(bot_id)] = limits.to_dict()
+                data["bots"] = bots_section
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump(data, handle, indent=2, ensure_ascii=False)
+
+            if bot_id is not None:
+                self.static_limits_map[bot_id] = limits
+        except Exception as exc:
+            self.logger.error("Błąd podczas zapisu limitów ryzyka: %s", exc)
+
+    def _load_static_limits(self) -> Dict[int, RiskLimits]:
+        path = Path("config/risk_limits.json")
+        if not path.exists():
+            return {}
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            self.logger.error("Nie można odczytać pliku limitów ryzyka %s: %s", path, exc)
+            return {}
+
+        result: Dict[int, RiskLimits] = {}
+        default_cfg = payload.get('default')
+        if isinstance(default_cfg, dict):
+            self.default_limits = self._dict_to_limits(default_cfg)
+
+        bots_cfg = payload.get('bots')
+        if isinstance(bots_cfg, dict):
+            iterator = bots_cfg.items()
+        else:
+            iterator = ((entry.get('bot_id'), entry) for entry in (bots_cfg or []))
+
+        for bot_identifier, cfg in iterator:
+            if bot_identifier is None or not isinstance(cfg, dict):
+                continue
+            try:
+                bot_id = int(bot_identifier)
+            except (TypeError, ValueError):
+                continue
+            result[bot_id] = self._dict_to_limits(cfg)
+        return result
+
+    def _dict_to_limits(self, cfg: Dict[str, Any]) -> RiskLimits:
+        return RiskLimits(
+            daily_loss_limit=float(cfg.get('daily_loss_limit', self.default_limits.daily_loss_limit)),
+            daily_profit_limit=float(cfg.get('daily_profit_limit', self.default_limits.daily_profit_limit)),
+            max_drawdown_limit=float(cfg.get('max_drawdown_limit', self.default_limits.max_drawdown_limit)),
+            position_size_limit=float(cfg.get('position_size_limit', self.default_limits.position_size_limit)),
+            max_open_positions=int(cfg.get('max_open_positions', self.default_limits.max_open_positions)),
+            max_correlation=float(cfg.get('max_correlation', self.default_limits.max_correlation)),
+            volatility_threshold=float(cfg.get('volatility_threshold', self.default_limits.volatility_threshold)),
+            var_limit=float(cfg.get('var_limit', self.default_limits.var_limit)),
+        )
+
+    def _get_static_limit(self, bot_id: int) -> Optional[RiskLimits]:
+        limit = self.static_limits_map.get(bot_id)
+        if not limit:
+            return None
+        with self._lock:
+            self.limits_cache[bot_id] = limit
+        return limit
+
+    def _load_historical_metrics(self) -> Dict[int, RiskMetrics]:
+        path = Path("analytics/historical_metrics.json")
+        if not path.exists():
+            return {}
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception as exc:
+            self.logger.error("Nie można odczytać pliku metryk historycznych %s: %s", path, exc)
+            return {}
+
+        result: Dict[int, RiskMetrics] = {}
+        records = payload.get('bots') if isinstance(payload, dict) else payload
+        if isinstance(records, dict):
+            iterator = records.items()
+        else:
+            iterator = ((entry.get('bot_id'), entry) for entry in (records or []))
+
+        for bot_identifier, data in iterator:
+            if bot_identifier is None or not isinstance(data, dict):
+                continue
+            try:
+                bot_id = int(bot_identifier)
+            except (TypeError, ValueError):
+                continue
+            result[bot_id] = RiskMetrics(
+                daily_pnl=float(data.get('daily_pnl', 0.0)),
+                daily_loss=float(data.get('daily_loss', 0.0)),
+                daily_profit=float(data.get('daily_profit', 0.0)),
+                max_drawdown=float(data.get('max_drawdown', 0.0)),
+                current_drawdown=float(data.get('current_drawdown', 0.0)),
+                win_rate=float(data.get('win_rate', 0.0)),
+                profit_factor=float(data.get('profit_factor', 0.0)),
+                sharpe_ratio=float(data.get('sharpe_ratio', 0.0)),
+                var_95=float(data.get('var_95', 0.0)),
+                exposure=float(data.get('exposure', 0.0)),
+                correlation_risk=float(data.get('correlation_risk', 0.0)),
+            )
+        return result
+
+    def _get_static_metrics(self, bot_id: int) -> Optional[RiskMetrics]:
+        metrics = self.historical_metrics.get(bot_id)
+        if metrics:
+            return metrics
+        return None
+
+    async def validate_order(self, order_request: Any, bot_id: int) -> bool:
+        try:
+            limits = await self.get_risk_limits(bot_id)
+            quantity = float(getattr(order_request, 'quantity', 0.0))
+            price = getattr(order_request, 'price', None)
+            if price is None and hasattr(order_request, 'metadata'):
+                metadata = getattr(order_request, 'metadata') or {}
+                price = metadata.get('reference_price')
+            price = float(price or 0.0)
+            notional = quantity * price if price > 0 else quantity
+
+            if limits.max_open_positions and len(self.positions_cache.get(bot_id, [])) >= limits.max_open_positions:
+                await self._log_risk_event(
+                    bot_id,
+                    RiskEventType.POSITION_SIZE_LIMIT,
+                    RiskLevel.HIGH,
+                    f"Max open positions reached for bot {bot_id}",
+                )
+                return False
+
+            limit_value = limits.position_size_limit
+            if limit_value and limit_value > 0 and notional > float(limit_value):
+                await self._log_risk_event(
+                    bot_id,
+                    RiskEventType.POSITION_SIZE_LIMIT,
+                    RiskLevel.HIGH,
+                    f"Order size {notional:.2f} exceeds limit {limit_value}",
+                )
+                return False
+
+            return True
+        except Exception as exc:
+            self.logger.error("Błąd podczas walidacji zlecenia: %s", exc)
+            return False
 
 
 _risk_manager_lock = threading.RLock()

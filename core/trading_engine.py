@@ -9,14 +9,19 @@ only needs them to expose a consistent async API.
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+from app.exchange.adapter_factory import create_exchange_adapter
+from app.exchange.live_ccxt_adapter import LiveCCXTAdapter
 from utils.config_manager import get_config_manager
 from utils.event_bus import EventTypes, get_event_bus
 from utils.rate_limiter import RateLimitExceeded, RateLimiter
@@ -132,13 +137,11 @@ class TradingEngine:
 
     def __init__(self) -> None:
         self.demo_mode: bool = True
-        self.exchange_configs: Dict[str, Dict[str, Any]] = {
-            "binance": {
-                "enabled": False,
-                "testnet": True,
-                "priority": 1,
-            }
-        }
+        self.trading_mode: str = "auto"
+        self.exchange_configs: Dict[str, Dict[str, Any]] = {}
+        self._live_adapter_count: int = 0
+        self.has_live_price_source: bool = False
+        self.execute_live_orders: bool = False
         self.exchanges: Dict[str, Any] = {}
         self.active_orders: Dict[str, OrderResponse] = {}
         self.trade_history: List[Trade] = []
@@ -151,6 +154,8 @@ class TradingEngine:
         self.event_bus = get_event_bus()
         self.rate_limiter = RateLimiter(self.event_bus)
         self._configure_rate_limits_from_config()
+        self._load_exchange_configuration()
+        self._install_exchange_adapters()
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -173,6 +178,80 @@ class TradingEngine:
             logger.debug("Rate limit config unavailable, using defaults: %s", exc)
             cfg = {}
         self.configure_rate_limits(cfg)
+
+    def _load_exchange_configuration(self) -> None:
+        """Load trading/exchange configuration from config manager and env."""
+
+        try:
+            trading_cfg = get_config_manager().get_setting("trading") or {}
+        except Exception:
+            trading_cfg = {}
+
+        env_mode = os.environ.get("TRADING_MODE")
+        mode = str(env_mode or trading_cfg.get("mode") or "auto").lower()
+        self.trading_mode = mode
+        paper_trading = bool(trading_cfg.get("paper_trading", False))
+
+        # Demo mode is disabled only if we explicitly run live and have live adapters.
+        self.demo_mode = not (mode == "live" and not paper_trading)
+
+        try:
+            exchanges_cfg = get_config_manager().get_setting("exchanges") or {}
+        except Exception:
+            exchanges_cfg = {}
+
+        available = exchanges_cfg.get("available") or []
+        if isinstance(available, dict):
+            available = list(available.keys())
+        default_exchange = exchanges_cfg.get("default") or trading_cfg.get("default_exchange")
+
+        if default_exchange and default_exchange not in available:
+            available.insert(0, default_exchange)
+
+        if not available:
+            # Backwards compatibility – ensure at least one simulated adapter exists.
+            available = [default_exchange or "binance"]
+
+        for priority, exchange_name in enumerate(available, start=1):
+            if not exchange_name:
+                continue
+            exchange_name = str(exchange_name).lower()
+            self.exchange_configs.setdefault(
+                exchange_name,
+                {
+                    "enabled": True,
+                    "priority": priority,
+                },
+            )
+
+    def _install_exchange_adapters(self) -> None:
+        self._live_adapter_count = 0
+        self.has_live_price_source = False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        for name, cfg in self.exchange_configs.items():
+            if not cfg.get("enabled", True):
+                continue
+            if name in self.exchanges:
+                if isinstance(self.exchanges[name], LiveCCXTAdapter):
+                    self._live_adapter_count += 1
+                continue
+            try:
+                adapter = create_exchange_adapter(name, mode=self.trading_mode, event_loop=loop)
+                self.register_exchange_adapter(name, adapter)
+            except Exception as exc:
+                logger.error("Failed to initialise adapter %s: %s", name, exc)
+
+        self.execute_live_orders = self.trading_mode == "live" and self._live_adapter_count > 0
+        if self.execute_live_orders:
+            self.demo_mode = False
+        else:
+            self.demo_mode = True
+            if self.trading_mode == "live":
+                logger.warning("Live trading mode requested but no live adapters available – keeping demo mode")
 
     def _apply_rate_limit_config(self, config: Dict[str, Any]) -> None:
         def as_int(value: Any, default: int) -> int:
@@ -287,6 +366,9 @@ class TradingEngine:
         """Register an exchange adapter used in live mode."""
 
         self.exchanges[name.lower()] = adapter
+        if isinstance(adapter, LiveCCXTAdapter):
+            self._live_adapter_count += 1
+            self.has_live_price_source = True
 
     # ------------------------------------------------------------------
     # Public API used by tests
@@ -431,16 +513,22 @@ class TradingEngine:
     async def _place_demo_order(self, request: OrderRequest) -> OrderResponse:
         self._order_sequence += 1
         order_id = f"demo_{int(time.time() * 1000)}_{self._order_sequence}"
+        live_price = await self._get_live_price(request.symbol) if self.has_live_price_source else None
+        metadata = dict(request.metadata or {})
+        if live_price is not None:
+            metadata.setdefault("price_source", "live_market_data")
+        else:
+            metadata.setdefault("price_source", "simulated")
         if request.order_type is OrderType.MARKET:
             status = OrderStatus.FILLED
             filled_qty = request.quantity
             remaining = 0.0
-            average_price = request.price or self._mock_price(request.symbol)
+            average_price = request.price or live_price or self._mock_price(request.symbol)
         else:
             status = OrderStatus.NEW
             filled_qty = 0.0
             remaining = request.quantity
-            average_price = None
+            average_price = request.price or live_price
 
         commission_asset = "USDT"
         commission = filled_qty * 0.0005 if average_price else 0.0
@@ -461,7 +549,7 @@ class TradingEngine:
             commission_asset=commission_asset,
             timestamp=datetime.utcnow(),
             client_order_id=request.client_order_id,
-            metadata=request.metadata,
+            metadata=metadata,
         )
         return response
 
@@ -472,10 +560,46 @@ class TradingEngine:
             (name for name, cfg in self.exchange_configs.items() if cfg.get("enabled")),
             key=lambda name: self.exchange_configs[name].get("priority", 100),
         )
-        for name in enabled:
-            adapter = self.exchanges.get(name)
-            if adapter is None:
-                continue
+        live_adapters: List[Tuple[str, LiveCCXTAdapter]] = [
+            (name, self.exchanges[name])
+            for name in enabled
+            if isinstance(self.exchanges.get(name), LiveCCXTAdapter)
+        ]
+
+        if not live_adapters:
+            logger.warning("No live adapters available – using demo execution for %s", request.symbol)
+            return await self._place_demo_order(request)
+
+        if not self.execute_live_orders:
+            price = await self._get_live_price(request.symbol, live_adapters)
+            average_price = request.price or price or self._mock_price(request.symbol)
+            metadata = dict(request.metadata or {})
+            metadata.update(
+                {
+                    "executed": "paper",
+                    "price_source": "live_market_data" if price is not None else metadata.get("price_source", "simulated"),
+                }
+            )
+            return OrderResponse(
+                success=True,
+                order_id=f"paper_{int(time.time() * 1000)}",
+                symbol=request.symbol,
+                side=request.side,
+                order_type=request.order_type,
+                quantity=request.quantity,
+                price=request.price,
+                status=OrderStatus.FILLED,
+                filled_quantity=request.quantity,
+                remaining_quantity=0.0,
+                average_price=average_price,
+                commission=0.0,
+                commission_asset="USDT",
+                timestamp=datetime.utcnow(),
+                client_order_id=request.client_order_id,
+                metadata=metadata,
+            )
+
+        for name, adapter in live_adapters:
             try:
                 result = await adapter.place_order(
                     symbol=request.symbol,
@@ -484,33 +608,98 @@ class TradingEngine:
                     price=request.price,
                     order_type=request.order_type.value.lower(),
                 )
-                if isinstance(result, dict):
-                    order_id = result.get("order_id") or result.get("id") or f"{name}_{int(time.time()*1000)}"
-                else:
-                    order_id = f"{name}_{int(time.time()*1000)}"
-                response = OrderResponse(
-                    success=True,
-                    order_id=order_id,
-                    symbol=request.symbol,
-                    side=request.side,
-                    order_type=request.order_type,
-                    quantity=request.quantity,
-                    price=request.price,
-                    status=OrderStatus.FILLED,
-                    filled_quantity=request.quantity,
-                    remaining_quantity=0.0,
-                    average_price=request.price or self._mock_price(request.symbol),
-                    commission=0.0,
-                    commission_asset="USDT",
-                    timestamp=datetime.utcnow(),
-                    client_order_id=request.client_order_id,
-                    metadata=request.metadata,
-                )
-                return response
+                payload = result if isinstance(result, dict) else {}
+                return self._build_live_order_response(request, payload, name)
             except Exception as exc:  # pragma: no cover - depends on adapter behaviour
                 logger.exception("Exchange %s order placement failed: %s", name, exc)
+
         logger.warning("Falling back to demo order placement for %s", request.symbol)
         return await self._place_demo_order(request)
+
+    async def _get_live_price(
+        self,
+        symbol: str,
+        adapters: Optional[List[Tuple[str, LiveCCXTAdapter]]] = None,
+    ) -> Optional[float]:
+        sources = adapters or [
+            (name, adapter)
+            for name, adapter in self.exchanges.items()
+            if isinstance(adapter, LiveCCXTAdapter)
+        ]
+        for name, adapter in sources:
+            try:
+                ticker = await adapter.fetch_ticker(symbol)
+                price = float(
+                    ticker.get("last")
+                    or ticker.get("close")
+                    or ticker.get("ask")
+                    or ticker.get("bid")
+                    or 0.0
+                )
+                if price > 0:
+                    return price
+            except Exception as exc:
+                logger.debug("Live price fetch failed for %s via %s: %s", symbol, name, exc)
+        return None
+
+    def _build_live_order_response(
+        self, request: OrderRequest, result: Dict[str, Any], adapter_name: str
+    ) -> OrderResponse:
+        status_raw = str(result.get("status", "filled")).lower()
+        status_map = {
+            "open": OrderStatus.NEW,
+            "new": OrderStatus.NEW,
+            "closed": OrderStatus.FILLED,
+            "filled": OrderStatus.FILLED,
+            "canceled": OrderStatus.CANCELED,
+            "cancelled": OrderStatus.CANCELED,
+            "rejected": OrderStatus.REJECTED,
+            "expired": OrderStatus.EXPIRED,
+            "partial": OrderStatus.PARTIALLY_FILLED,
+            "partially_filled": OrderStatus.PARTIALLY_FILLED,
+        }
+        status = status_map.get(status_raw, OrderStatus.FILLED)
+
+        filled = float(result.get("filled") or result.get("amount") or (request.quantity if status == OrderStatus.FILLED else 0.0))
+        remaining = max(request.quantity - filled, 0.0)
+        average = result.get("average") or result.get("avgPrice") or result.get("price")
+        try:
+            average_price = float(average) if average not in (None, "") else None
+        except Exception:
+            average_price = None
+        if average_price is None:
+            average_price = request.price or self._mock_price(request.symbol)
+
+        commission = float(result.get("fee") or 0.0)
+        commission_asset = str(result.get("feeAsset") or result.get("fee_asset") or "USDT")
+
+        metadata = dict(request.metadata or {})
+        metadata.update(
+            {
+                "adapter": adapter_name,
+                "live": True,
+                "exchange_response": result,
+            }
+        )
+
+        return OrderResponse(
+            success=status not in {OrderStatus.REJECTED, OrderStatus.CANCELED, OrderStatus.EXPIRED},
+            order_id=str(result.get("id") or result.get("order_id") or f"{adapter_name}_{int(time.time() * 1000)}"),
+            symbol=request.symbol,
+            side=request.side,
+            order_type=request.order_type,
+            quantity=request.quantity,
+            price=request.price,
+            status=status,
+            filled_quantity=filled,
+            remaining_quantity=remaining,
+            average_price=average_price,
+            commission=commission,
+            commission_asset=commission_asset,
+            timestamp=datetime.utcnow(),
+            client_order_id=request.client_order_id,
+            metadata=metadata,
+        )
 
     async def _test_exchange_connection(self, adapter: Any) -> bool:
         if hasattr(adapter, "test_connection"):

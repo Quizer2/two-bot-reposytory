@@ -1,5 +1,5 @@
 {
-  "timestamp": "2025-10-13T19:46:03.008355",
+  "timestamp": "2025-10-13T21:56:24.409335",
   "test_type": "Bot → TradingEngine → API → Exchange Flow",
   "results": [
     {
@@ -15,12 +15,12 @@
     {
       "test": "Order Placement Simulation",
       "status": "PASSED",
-      "details": "Test order placed successfully: OrderResponse(success=True, order_id='demo_1760384763007_1', symbol='BTCUSDT', side=<OrderSide.BUY: 'BUY'>, order_type=<OrderType.MARKET: 'MARKET'>, quantity=0.001, price=50000.0, status=<OrderStatus.FILLED: 'FILLED'>, filled_quantity=0.001, remaining_quantity=0.0, average_price=50000.0, commission=5e-07, commission_asset='USDT', timestamp=datetime.datetime(2025, 10, 13, 19, 46, 3, 7241), error=None, client_order_id=None, metadata={})"
+      "details": "Test order placed successfully: OrderResponse(success=True, order_id='demo_1760392584407_1', symbol='BTCUSDT', side=<OrderSide.BUY: 'BUY'>, order_type=<OrderType.MARKET: 'MARKET'>, quantity=0.001, price=50000.0, status=<OrderStatus.FILLED: 'FILLED'>, filled_quantity=0.001, remaining_quantity=0.0, average_price=50000.0, commission=5e-07, commission_asset='USDT', timestamp=datetime.datetime(2025, 10, 13, 21, 56, 24, 407821), error=None, client_order_id=None, metadata={'price_source': 'simulated'})"
     },
     {
       "test": "Bot Trading Integration",
-      "status": "SKIPPED",
-      "details": "BotManager not available"
+      "status": "PASSED",
+      "details": "Bot integration OK. Methods: ['create_bot', 'start_bot', 'stop_bot', 'get_bot_status'], Trading access: True"
     },
     {
       "test": "Market Data Flow",
