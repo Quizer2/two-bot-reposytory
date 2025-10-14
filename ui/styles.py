@@ -66,18 +66,111 @@ QPushButton#navButton:checked {{
 
 /* Karty */
 QFrame.card {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #2a2a2a, stop:1 #1e1e1e);
-    border: 1px solid rgba(102, 126, 234, 0.2);
-    border-radius: 12px;
-    padding: 16px;
+    background: #ffffff;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 16px;
+    padding: 18px;
     margin: 8px;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
 }}
 
 QFrame.card:hover {{
-    border: 1px solid rgba(102, 126, 234, 0.5);
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 #2e2e2e, stop:1 #222222);
+    border: 1px solid rgba(102, 126, 234, 0.25);
+    box-shadow: 0 16px 40px rgba(102, 126, 234, 0.18);
+}}
+
+QWidget#dashboardCard,
+QWidget#botCard,
+QWidget#portfolioSummaryCard,
+QWidget#balanceCard,
+QFrame#sectionCard {{
+    background: #ffffff;
+    border: 1px solid rgba(29, 53, 87, 0.08);
+    border-radius: 16px;
+    padding: 0px;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+}}
+
+QWidget#dashboardCard:hover,
+QWidget#botCard:hover,
+QWidget#portfolioSummaryCard:hover,
+QWidget#balanceCard:hover,
+QFrame#sectionCard:hover {{
+    border: 1px solid rgba(102, 126, 234, 0.25);
+    box-shadow: 0 16px 40px rgba(102, 126, 234, 0.18);
+}}
+
+QFrame#metricPill,
+QFrame#kpiPill {{
+    background: #f8faff;
+    border: 1px solid rgba(102, 126, 234, 0.18);
+    border-radius: 14px;
+    padding: 12px 16px;
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+    transition: border 0.2s ease, box-shadow 0.2s ease;
+}}
+
+QFrame#metricPill:hover,
+QFrame#kpiPill:hover {{
+    border: 1px solid rgba(118, 75, 162, 0.35);
+    box-shadow: 0 12px 28px rgba(102, 126, 234, 0.16);
+}}
+
+QLabel#metricTitle {{
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #64748b;
+}}
+
+QLabel#metricValue {{
+    font-size: 22px;
+    font-weight: 700;
+    color: #0f172a;
+}}
+
+QLabel#metricCaption {{
+    font-size: 11px;
+    color: #94a3b8;
+}}
+
+QLabel#cardTitle,
+QLabel#sectionTitle,
+QLabel#summaryTitle {{
+    color: #1f2a44;
+    letter-spacing: 0.01em;
+    font-weight: 600;
+}}
+
+QLabel#cardSubtitle,
+QLabel#infoLabel,
+QLabel#assetsCount,
+QLabel#emptyStateLabel {{
+    color: #5f6c7b;
+}}
+
+QLabel#cardValue,
+QLabel#totalValue,
+QLabel#balanceLabel {{
+    color: #0f172a;
+}}
+
+QPushButton#inlineAction {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 {COLORS['primary']}, stop:1 {COLORS['secondary']});
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+
+QPushButton#inlineAction:hover {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop:0 rgba(102, 126, 234, 0.9),
+        stop:1 rgba(118, 75, 162, 0.9));
 }}
 
 /* Przyciski główne */
@@ -141,87 +234,79 @@ QPushButton.danger:hover {{
 
 /* Pola tekstowe */
 QLineEdit, QTextEdit, QPlainTextEdit {{
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(102, 126, 234, 0.3);
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #ffffff;
+    background: #ffffff;
+    border: 1px solid rgba(102, 126, 234, 0.28);
+    border-radius: 10px;
+    padding: 9px 14px;
+    color: #1f2a44;
     font-size: 14px;
     min-height: 20px;
 }}
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
-    border: 1px solid rgba(102, 126, 234, 0.7);
-    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(102, 126, 234, 0.6);
+    background: rgba(102, 126, 234, 0.08);
 }}
 
 /* Tabele */
 QTableWidget {{
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    gridline-color: #2a2a2a;
+    background: #ffffff;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 12px;
+    gridline-color: rgba(15, 23, 42, 0.08);
     font-size: 13px;
-    selection-background-color: rgba(102, 126, 234, 0.3);
+    selection-background-color: rgba(102, 126, 234, 0.12);
+    alternate-background-color: rgba(102, 126, 234, 0.04);
 }}
 
 QTableWidget::item {{
-    padding: 8px 12px;
-    border-bottom: 1px solid #2a2a2a;
-    color: #ffffff;
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    color: #1f2a44;
 }}
 
 QTableWidget::item:selected {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(102, 126, 234, 0.4), 
-        stop:1 rgba(118, 75, 162, 0.4));
+    background: rgba(102, 126, 234, 0.18);
+    color: #0f172a;
 }}
 
 QTableWidget::item:hover {{
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(102, 126, 234, 0.12);
 }}
 
 /* Nagłówki tabel */
 QHeaderView::section {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(102, 126, 234, 0.8), 
-        stop:1 rgba(118, 75, 162, 0.8));
-    color: #ffffff;
-    padding: 15px 18px;
+    background: #f3f4ff;
+    color: #1f2a44;
+    padding: 14px 16px;
     border: none;
-    border-right: 1px solid #2a2a2a;
+    border-right: 1px solid rgba(102, 126, 234, 0.1);
     font-weight: 600;
     font-size: 13px;
-    min-height: 35px;
+    min-height: 32px;
     max-height: 40px;
 }}
 
 QHeaderView::section:hover {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(102, 126, 234, 0.9), 
-        stop:1 rgba(118, 75, 162, 0.9));
+    background: rgba(102, 126, 234, 0.18);
 }}
 
 /* Scrollbary */
 QScrollBar:vertical {{
-    background: #1a1a1a;
-    width: 8px;
-    border-radius: 4px;
+    background: transparent;
+    width: 10px;
+    border-radius: 5px;
     margin: 0;
 }}
 
 QScrollBar::handle:vertical {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(102, 126, 234, 0.6), 
-        stop:1 rgba(118, 75, 162, 0.6));
-    border-radius: 4px;
-    min-height: 20px;
+    background: rgba(102, 126, 234, 0.3);
+    border-radius: 5px;
+    min-height: 24px;
 }}
 
 QScrollBar::handle:vertical:hover {{
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 rgba(102, 126, 234, 0.8), 
-        stop:1 rgba(118, 75, 162, 0.8));
+    background: rgba(102, 126, 234, 0.45);
 }}
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
@@ -229,34 +314,32 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 }}
 
 QScrollBar:horizontal {{
-    background: #1a1a1a;
-    height: 8px;
-    border-radius: 4px;
+    background: transparent;
+    height: 10px;
+    border-radius: 5px;
     margin: 0;
 }}
 
 QScrollBar::handle:horizontal {{
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop:0 rgba(102, 126, 234, 0.6), 
-        stop:1 rgba(118, 75, 162, 0.6));
-    border-radius: 4px;
-    min-width: 20px;
+    background: rgba(102, 126, 234, 0.3);
+    border-radius: 5px;
+    min-width: 24px;
 }}
 
 /* Zakładki */
 QTabWidget::pane {{
-    border: 1px solid #2a2a2a;
-    border-radius: 8px;
-    background: #1a1a1a;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 12px;
+    background: #ffffff;
 }}
 
 QTabBar::tab {{
-    background: #2a2a2a;
-    color: #cccccc;
+    background: #e9ecfb;
+    color: #465165;
     padding: 12px 20px;
     margin-right: 2px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
     font-weight: 500;
 }}
 
@@ -268,8 +351,8 @@ QTabBar::tab:selected {{
 }}
 
 QTabBar::tab:hover:!selected {{
-    background: rgba(102, 126, 234, 0.3);
-    color: white;
+    background: rgba(102, 126, 234, 0.18);
+    color: #1f2a44;
 }}
 
 /* Checkboxy */
@@ -296,45 +379,45 @@ QCheckBox::indicator:checked {{
 
 /* ComboBox */
 QComboBox {{
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(102, 126, 234, 0.3);
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #ffffff;
+    background: #ffffff;
+    border: 1px solid rgba(102, 126, 234, 0.28);
+    border-radius: 10px;
+    padding: 8px 14px;
+    color: #1f2a44;
     font-size: 14px;
     min-height: 20px;
 }}
 
 QComboBox:focus {{
-    border: 1px solid rgba(102, 126, 234, 0.7);
+    border: 1px solid rgba(102, 126, 234, 0.6);
 }}
 
 QComboBox::drop-down {{
     border: none;
-    width: 20px;
+    width: 24px;
 }}
 
 QComboBox::down-arrow {{
     image: none;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid #cccccc;
-    margin-right: 5px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 6px solid #667eea;
+    margin-right: 8px;
 }}
 
 /* SpinBox */
 QSpinBox, QDoubleSpinBox {{
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(102, 126, 234, 0.3);
-    border-radius: 6px;
+    background: #ffffff;
+    border: 1px solid rgba(102, 126, 234, 0.28);
+    border-radius: 10px;
     padding: 8px 12px;
-    color: #ffffff;
+    color: #1f2a44;
     font-size: 14px;
     min-height: 20px;
 }}
 
 QSpinBox:focus, QDoubleSpinBox:focus {{
-    border: 1px solid rgba(102, 126, 234, 0.7);
+    border: 1px solid rgba(102, 126, 234, 0.6);
 }}
 
 /* Etykiety */
@@ -513,24 +596,25 @@ QPushButton#navButton:checked {{
 
 QFrame.card {{
     background: #ffffff;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    border-radius: 12px;
-    padding: 16px;
+    border: 1px solid rgba(29, 53, 87, 0.08);
+    border-radius: 16px;
+    padding: 18px;
     margin: 8px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
 }}
 
 QLineEdit, QTextEdit, QPlainTextEdit {{
     background: #ffffff;
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #212529;
+    border: 1px solid rgba(102, 126, 234, 0.28);
+    border-radius: 10px;
+    padding: 9px 14px;
+    color: #1f2a44;
     font-size: 14px;
 }}
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
-    border: 1px solid {COLORS['primary']};
+    border: 1px solid rgba(102, 126, 234, 0.6);
+    background: rgba(102, 126, 234, 0.08);
 }}
 """
 

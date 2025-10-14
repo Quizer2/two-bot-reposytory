@@ -131,7 +131,7 @@ def net_guard(name: str) -> Callable:
                 except Exception:
                     pass
                 try:
-                    rt.record_http_latency_ms(dt)
+                    rt.record_http_latency_ms(dt, exchange=ex, endpoint=endpoint_label)
                 except Exception:
                     pass
                 try:
@@ -182,7 +182,7 @@ def net_guard(name: str) -> Callable:
                 except Exception:
                     pass
                 try:
-                    rt.record_http_latency_ms(dt)
+                    rt.record_http_latency_ms(dt, exchange=ex, endpoint=endpoint_label)
                 except Exception:
                     pass
                 try:

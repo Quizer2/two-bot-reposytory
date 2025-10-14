@@ -47,6 +47,14 @@ from utils.config_manager import get_config_manager, get_ui_setting, get_app_set
 from utils.logger import get_logger, LogType
 from utils.helpers import FormatHelper, CalculationHelper
 
+try:
+    from ui.styles import COLORS
+except ImportError:
+    COLORS = {
+        'primary': '#667eea',
+        'secondary': '#764ba2'
+    }
+
 # Import UI components
 try:
     from ui.flow_layout import FlowLayout
@@ -72,6 +80,7 @@ class BotCard(QWidget):
     
     def setup_ui(self):
         """Konfiguracja UI karty bota"""
+        self.setObjectName("botCard")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(12)
@@ -175,20 +184,67 @@ class BotCard(QWidget):
             QLabel#statusIndicator {
                 font-size: 20px;
                 margin-left: 5px;
-            }
-            QLabel#infoLabel {
+            }}
+            QLabel#infoLabel {{
                 font-size: 12px;
                 color: #c9c9c9;
                 font-weight: 500;
-            }
-            QLabel#infoValue {
+            }}
+            QLabel#infoValue {{
                 font-size: 12px;
                 color: #f0f0f0;
             }
             QLabel#pnlValue {
                 font-size: 12px;
                 font-weight: 600;
-            }
+            }}
+            QPushButton#actionButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {primary}, stop:1 {secondary});
+                color: white;
+                border: none;
+                border-radius: 10px;
+                padding: 8px 18px;
+                font-weight: 600;
+                min-width: 120px;
+                min-height: 36px;
+            }}
+            QPushButton#actionButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(102, 126, 234, 0.9), stop:1 rgba(118, 75, 162, 0.9));
+            }}
+            QPushButton#iconButton {{
+                background: rgba(102, 126, 234, 0.08);
+                border: none;
+                color: {primary};
+                font-size: 16px;
+                padding: 6px 10px;
+                min-width: 34px;
+                min-height: 34px;
+                border-radius: 8px;
+            }}
+            QPushButton#iconButton:hover {{
+                background: rgba(102, 126, 234, 0.16);
+            }}
+        """)
+        self._start_button_style = f"""
+            QPushButton#actionButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 {primary}, stop:1 {secondary});
+                color: white;
+                border: none;
+                border-radius: 10px;
+                padding: 8px 18px;
+                font-weight: 600;
+                min-width: 120px;
+                min-height: 36px;
+            }}
+            QPushButton#actionButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 rgba(102, 126, 234, 0.9), stop:1 rgba(118, 75, 162, 0.9));
+            }}
+        """
+        self._stop_button_style = """
             QPushButton#actionButton {
                 background-color: #667eea;
                 color: white;
@@ -217,7 +273,9 @@ class BotCard(QWidget):
             QPushButton#iconButton:hover {
                 background-color: #3a3a3a;
             }
-        """)
+        """
+        if hasattr(self, 'start_stop_btn'):
+            self.start_stop_btn.setStyleSheet(self._start_button_style)
     
     def update_data(self, bot_data: Dict[str, Any]):
         """Aktualizuj dane karty"""
@@ -231,36 +289,18 @@ class BotCard(QWidget):
         if status == 'running':
             self.status_indicator.setStyleSheet("color: #4CAF50;")
             self.start_stop_btn.setText("⏸️ Stop")
-            self.start_stop_btn.setStyleSheet("""
-                QPushButton#actionButton {
-                    background-color: #F44336;
-                }
-                QPushButton#actionButton:hover {
-                    background-color: #D32F2F;
-                }
-            """)
+            if hasattr(self, '_stop_button_style'):
+                self.start_stop_btn.setStyleSheet(self._stop_button_style)
         elif status == 'error':
             self.status_indicator.setStyleSheet("color: #FF9800;")
             self.start_stop_btn.setText("▶️ Start")
-            self.start_stop_btn.setStyleSheet("""
-                QPushButton#actionButton {
-                    background-color: #4CAF50;
-                }
-                QPushButton#actionButton:hover {
-                    background-color: #388E3C;
-                }
-            """)
+            if hasattr(self, '_start_button_style'):
+                self.start_stop_btn.setStyleSheet(self._start_button_style)
         else:  # stopped
             self.status_indicator.setStyleSheet("color: #9E9E9E;")
             self.start_stop_btn.setText("▶️ Start")
-            self.start_stop_btn.setStyleSheet("""
-                QPushButton#actionButton {
-                    background-color: #4CAF50;
-                }
-                QPushButton#actionButton:hover {
-                    background-color: #388E3C;
-                }
-            """)
+            if hasattr(self, '_start_button_style'):
+                self.start_stop_btn.setStyleSheet(self._start_button_style)
         
         # Strategia
         self.strategy_value.setText(bot_data.get('strategy', 'N/A'))
@@ -443,29 +483,46 @@ class UpdatedBotManagementWidget(QWidget):
         
         title = QLabel("Zarządzanie Botami")
         title.setObjectName("pageTitle")
-        header_layout.addWidget(title)
-        
-        header_layout.addStretch()
-        
+        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        title.setStyleSheet("color: #1f2a44;")
+        title_box.addWidget(title)
+
+        subtitle = QLabel("Twórz, uruchamiaj i monitoruj boty w jednym miejscu. Wszystkie akcje są powiązane z danymi systemu.")
+        subtitle.setObjectName("cardSubtitle")
+        subtitle.setWordWrap(True)
+        title_box.addWidget(subtitle)
+        title_box.addStretch()
+        header_layout.addLayout(title_box, stretch=3)
+
+        controls_layout = QVBoxLayout()
+        controls_layout.setSpacing(10)
+
         # Przyciski akcji
-        add_bot_btn = QPushButton("➕ Dodaj Bota")
-        add_bot_btn.setObjectName("actionButton")
+        add_bot_btn = QPushButton("➕ Dodaj bota")
+        add_bot_btn.setObjectName("inlineAction")
+        add_bot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_bot_btn.clicked.connect(self.add_new_bot)
-        header_layout.addWidget(add_bot_btn)
+        controls_layout.addWidget(add_bot_btn)
 
         refresh_ai_btn = QPushButton("🔄 Odśwież dane AI")
-        refresh_ai_btn.setObjectName("actionButton")
+        refresh_ai_btn.setObjectName("inlineAction")
+        refresh_ai_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_ai_btn.clicked.connect(self.trigger_ai_refresh)
-        header_layout.addWidget(refresh_ai_btn)
+        controls_layout.addWidget(refresh_ai_btn)
         self.refresh_ai_btn = refresh_ai_btn
 
-        start_all_btn = QPushButton("▶️ Start Wszystkie")
-        start_all_btn.setObjectName("actionButton")
-        start_all_btn.clicked.connect(self.start_all_bots)
-        header_layout.addWidget(start_all_btn)
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(10)
 
-        stop_all_btn = QPushButton("⏸️ Stop Wszystkie")
-        stop_all_btn.setObjectName("actionButton")
+        start_all_btn = QPushButton("▶️ Start wszystkie")
+        start_all_btn.setObjectName("inlineAction")
+        start_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        start_all_btn.clicked.connect(self.start_all_bots)
+        buttons_row.addWidget(start_all_btn)
+
+        stop_all_btn = QPushButton("⏸️ Stop wszystkie")
+        stop_all_btn.setObjectName("inlineAction")
+        stop_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         stop_all_btn.clicked.connect(self.stop_all_bots)
         header_layout.addWidget(stop_all_btn)
         
@@ -488,9 +545,10 @@ class UpdatedBotManagementWidget(QWidget):
     def setup_stats_section(self, parent_layout):
         """Konfiguracja sekcji statystyk"""
         stats_frame = QFrame()
-        stats_frame.setObjectName("statsFrame")
+        stats_frame.setObjectName("sectionCard")
         stats_layout = QHBoxLayout(stats_frame)
-        stats_layout.setSpacing(20)
+        stats_layout.setSpacing(18)
+        stats_layout.setContentsMargins(24, 24, 24, 24)
         
         # Całkowita liczba botów
         total_card = self.create_stat_card("Wszystkie Boty", "0", "#2196F3")
@@ -517,6 +575,23 @@ class UpdatedBotManagementWidget(QWidget):
     def setup_ai_insights_section(self, parent_layout):
         ai_group = QGroupBox("Panel danych AI bota")
         ai_group.setObjectName("aiInsightsGroup")
+        ai_group.setStyleSheet("""
+            QGroupBox#aiInsightsGroup {
+                background: #ffffff;
+                border: 1px solid rgba(29, 53, 87, 0.08);
+                border-radius: 18px;
+                margin-top: 16px;
+                padding-top: 24px;
+            }
+            QGroupBox#aiInsightsGroup::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 18px;
+                margin-top: 0;
+                font-weight: 600;
+                color: #1f2a44;
+            }
+        """)
         ai_layout = QVBoxLayout(ai_group)
         ai_layout.setSpacing(14)
         ai_layout.setContentsMargins(18, 18, 18, 18)
@@ -524,6 +599,7 @@ class UpdatedBotManagementWidget(QWidget):
 
         self.ai_status_label = QLabel("Oczekiwanie na dane AI ...")
         self.ai_status_label.setObjectName("aiStatusLabel")
+        self.ai_status_label.setWordWrap(True)
         ai_layout.addWidget(self.ai_status_label)
 
         self.ai_price_table = QTableWidget(0, 6)
@@ -648,6 +724,26 @@ class UpdatedBotManagementWidget(QWidget):
         """Utwórz kartę statystyki"""
         card = QWidget()
         card.setObjectName("statCard")
+        card.setStyleSheet("""
+            QWidget#statCard {
+                background: #ffffff;
+                border: 1px solid rgba(29, 53, 87, 0.08);
+                border-radius: 16px;
+                padding: 4px;
+                box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+            }
+            QLabel#statTitle {
+                font-size: 12px;
+                color: #5f6c7b;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+            }
+            QLabel#statValue {
+                font-size: 26px;
+                color: #0f172a;
+                font-weight: 700;
+            }
+        """)
         layout = QVBoxLayout(card)
         layout.setSpacing(5)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -658,33 +754,46 @@ class UpdatedBotManagementWidget(QWidget):
         
         value_label = QLabel(value)
         value_label.setObjectName("statValue")
-        value_label.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: bold;")
+        value_label.setStyleSheet(f"color: {color};")
         layout.addWidget(value_label)
-        
+
         return card
     
     def setup_bots_section(self, parent_layout):
         """Konfiguracja sekcji botów"""
+        bots_frame = QFrame()
+        bots_frame.setObjectName("sectionCard")
+        bots_layout = QVBoxLayout(bots_frame)
+        bots_layout.setContentsMargins(24, 24, 24, 24)
+        bots_layout.setSpacing(18)
+
         # Header sekcji
-        bots_header = QLabel("Lista Botów")
+        bots_header = QLabel("Twoje boty")
         bots_header.setObjectName("sectionTitle")
-        parent_layout.addWidget(bots_header)
-        
+        bots_layout.addWidget(bots_header)
+
+        bots_description = QLabel("Każda karta reprezentuje zapisane ustawienia bota. Akcje start/stop są powiązane z aktualnym stanem w bazie danych.")
+        bots_description.setObjectName("cardSubtitle")
+        bots_description.setWordWrap(True)
+        bots_layout.addWidget(bots_description)
+
         # Scroll area dla kart botów
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
+
         # Widget zawierający karty
         self.bots_container = QWidget()
-        
+
         if FLOW_LAYOUT_AVAILABLE:
             self.bots_layout = FlowLayout(self.bots_container)
         else:
             self.bots_layout = QGridLayout(self.bots_container)
-        
+
         scroll_area.setWidget(self.bots_container)
-        parent_layout.addWidget(scroll_area)
+        bots_layout.addWidget(scroll_area)
+
+        parent_layout.addWidget(bots_frame)
     
     def setup_data_callbacks(self):
         """Konfiguracja callbacków dla aktualizacji danych"""
