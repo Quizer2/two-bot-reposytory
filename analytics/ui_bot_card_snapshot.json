@@ -1,0 +1,19 @@
+{
+  "object_name": "botCard",
+  "style": "QWidget {background-color: #1a1a1a;border: 1px solid #2a2a2a;border-radius: 12px;margin: 5px;color: #eaeaea;}QWidget:hover {border-color: #667eea;}QLabel#botName {font-size: 16px;font-weight: bold;color: #ffffff;}QLabel#statusIndicator {font-size: 20px;margin-left: 5px;}QLabel#infoLabel {font-size: 12px;color: #c9c9c9;font-weight: 500;}QLabel#infoValue {font-size: 12px;color: #f0f0f0;}QLabel#pnlValue {font-size: 12px;font-weight: 600;}QPushButton#actionButton {background: qlineargradient(x1:0, y1:0, x2:1, y2:0,stop:0 #667eea, stop:1 #764ba2);color: white;border: none;border-radius: 10px;padding: 8px 18px;font-weight: 600;min-width: 120px;min-height: 36px;}QPushButton#actionButton:hover {background: qlineargradient(x1:0, y1:0, x2:1, y2:0,stop:0 rgba(102, 126, 234, 0.9), stop:1 rgba(118, 75, 162, 0.9));}QPushButton#iconButton {background: rgba(102, 126, 234, 0.08);border: none;color: #667eea;font-size: 16px;padding: 6px 10px;min-width: 34px;min-height: 34px;border-radius: 8px;}QPushButton#iconButton:hover {background: rgba(102, 126, 234, 0.16);}",
+  "status_indicator_style": "color: #4CAF50;",
+  "labels": {
+    "name": "Momentum Pro",
+    "strategy": "Grid Trading",
+    "symbol": "BTC/USDT",
+    "pnl": "+$253.42",
+    "trades": "128"
+  },
+  "button_texts": {
+    "primary": "⏸️ Stop",
+    "icons": [
+      "⚙️",
+      "🗑️"
+    ]
+  }
+}

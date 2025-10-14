@@ -559,9 +559,32 @@ class RiskManager:
     async def update_risk_limits(self, bot_id: int, limits: RiskLimits):
         """Aktualizacja limitów ryzyka"""
         try:
-            if self.db_manager:
-                # Symulacja aktualizacji w bazie danych
-                pass
+            if self.db_manager and bot_id is not None:
+                payload = {
+                    'max_daily_loss_percent': float(limits.daily_loss_limit),
+                    'max_daily_profit_percent': float(limits.daily_profit_limit),
+                    'max_drawdown_percent': float(limits.max_drawdown_limit),
+                    'max_position_size_percent': float(limits.position_size_limit),
+                    'stop_loss_percent': float(limits.volatility_threshold),
+                    'take_profit_percent': float(limits.daily_profit_limit),
+                    'max_correlation': float(limits.max_correlation),
+                    'var_confidence_level': float(limits.var_limit) if limits.var_limit else 0.95,
+                }
+
+                try:
+                    conn = await self.db_manager.get_connection()
+                    async with conn.execute(
+                        'SELECT id FROM risk_limits WHERE bot_id = ? ORDER BY updated_at DESC LIMIT 1',
+                        (bot_id,),
+                    ) as cursor:
+                        row = await cursor.fetchone()
+
+                    if row and row[0]:
+                        await self.db_manager.update_risk_limits(int(row[0]), **payload)
+                    else:
+                        await self.db_manager.create_risk_limit(bot_id=bot_id, **payload)
+                except Exception as db_exc:
+                    self.logger.warning(f"Błąd podczas zapisu limitów do bazy: {db_exc}")
 
             # Aktualizacja cache
             with self._lock:
