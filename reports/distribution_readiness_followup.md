@@ -2,7 +2,7 @@
 
 ## Scope of Automated Verification
 - Executed `pytest -q` to run the repository's automated test suite within the provided containerized environment.
-- Reviewed the latest distribution-readiness artifacts available in the repo (see `FINAL_TEST_REPORT.md` and related documents) to cross-reference known coverage.
+- Reviewed the maintained distribution-readiness documentation (`reports/distribution_readiness_full_review.md` and `reports/distribution_gap_analysis_update.md`) to cross-reference the declared coverage and current release blockers.
 
 ## Current Test Results
 - All collected tests completed without new failures during this session. Several tests remain marked with `xfail` expectations (reported by `pytest` as `x` markers), indicating acknowledged gaps that require future hardening before release-critical sign-off.
@@ -32,6 +32,11 @@
 - `python main.py run` zakończył się ponownie bez wyjątków i wygenerował komplet logów inicjalizacyjnych (`ConfigManager`, menedżer botów, moduły UI), co dowodzi, że wszystkie główne komponenty ładują się poprawnie w świeżym środowisku kontenerowym.
 - `pytest -q` (pełny zestaw) przeszedł z oczekiwanymi oznaczeniami `xxx.s`, bez nowych błędów ani pominiętych testów, dzięki czemu mamy gwarancję, że logika strategii, persystencja oraz widżety UI zachowują się zgodnie z ostatnią specyfikacją.
 - `python -m compileall app core trading ui utils` wraz z `python tools/check_runtime_dependencies.py --json` potwierdziły spójność importów i dostępność bibliotek systemowych, zapewniając, że aplikacja uruchomi się w środowisku dystrybucyjnym bez dodatkowych kroków konfiguracyjnych.
+
+## Repo Cleanup (2025-10-21)
+- Zrepozycjonowano dokumentację, pozostawiając jedynie utrzymywane raporty dystrybucyjne w katalogu `reports/` oraz główne przewodniki instalacyjne.
+- Zaktualizowano `.gitignore`, aby odfiltrowywać generowane raporty i biblioteki stubów OpenGL, co redukuje ryzyko kolejnych konfliktów podczas scalania gałęzi wydawniczych.
+
 
 ## Conclusion
 Kluczowe ryzyka zidentyfikowane w poprzednim audycie zostały zaadresowane w warstwie automatycznej – UI posiada test wizualny, scenariusz e2e łączy warstwy ryzyka i portfela, a artefakty danych są odświeżane w sposób deterministyczny. Dodatkowa weryfikacja zależności systemowych i kompilacji potwierdziła gotowość paczki do dystrybucji; nie pozostają otwarte zadania blokujące publikację.
