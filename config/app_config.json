@@ -54,6 +54,27 @@
     "max_open_positions": 10,
     "paper_trading": true,
     "slippage_tolerance_percent": 0.5,
+    "supported_pairs": [
+      "BTC/USDT",
+      "ETH/USDT",
+      "BNB/USDT",
+      "SOL/USDT",
+      "ADA/USDT",
+      "XRP/USDT",
+      "DOT/USDT",
+      "MATIC/USDT",
+      "DOGE/USDT",
+      "LTC/USDT",
+      "AVAX/USDT",
+      "LINK/USDT",
+      "BTC/EUR",
+      "ETH/EUR",
+      "BTC/USD",
+      "ETH/USD",
+      "BTC/GBP",
+      "ETH/GBP",
+      "ADA/EUR"
+    ],
     "enabled": true,
     "mode": "auto",
     "default_exchange": "coinbase",
@@ -91,6 +112,32 @@
       "updated_at": "2025-10-13T19:32:36.139118"
     },
     "default_mode": "paper"
+  },
+  "notifications": {
+    "enabled": true,
+    "sound": true,
+    "desktop": true,
+    "types": {
+      "trades": true,
+      "profit": true,
+      "errors": true,
+      "api": false
+    },
+    "channels": {
+      "email": {
+        "enabled": false,
+        "address": ""
+      },
+      "telegram": {
+        "enabled": false,
+        "token": "",
+        "chat_id": ""
+      },
+      "discord": {
+        "enabled": false,
+        "webhook": ""
+      }
+    }
   },
   "test_section": {
     "test_value": "test_data",

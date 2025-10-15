@@ -16,6 +16,9 @@ env/
 build/
 dist/
 *.egg-info/
+vendor/linux/*.so*
+runtime_dependency_report.json
+reports/user_acceptance_*.json
 
 # Databases & logs
 *.db

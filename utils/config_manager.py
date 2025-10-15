@@ -106,7 +106,54 @@ class ConfigManager:
                 "default_take_profit_percent": 10.0,
                 "max_open_positions": 10,
                 "paper_trading": False,
-                "slippage_tolerance_percent": 0.5
+                "slippage_tolerance_percent": 0.5,
+                "supported_pairs": [
+                    "BTC/USDT",
+                    "ETH/USDT",
+                    "BNB/USDT",
+                    "SOL/USDT",
+                    "ADA/USDT",
+                    "XRP/USDT",
+                    "DOT/USDT",
+                    "MATIC/USDT",
+                    "DOGE/USDT",
+                    "LTC/USDT",
+                    "AVAX/USDT",
+                    "LINK/USDT",
+                    "BTC/EUR",
+                    "ETH/EUR",
+                    "BTC/USD",
+                    "ETH/USD",
+                    "BTC/GBP",
+                    "ETH/GBP",
+                    "ADA/EUR"
+                ]
+            },
+            "notifications": {
+                "enabled": True,
+                "sound": True,
+                "desktop": True,
+                "types": {
+                    "trades": True,
+                    "profit": True,
+                    "errors": True,
+                    "api": False
+                },
+                "channels": {
+                    "email": {
+                        "enabled": False,
+                        "address": ""
+                    },
+                    "telegram": {
+                        "enabled": False,
+                        "token": "",
+                        "chat_id": ""
+                    },
+                    "discord": {
+                        "enabled": False,
+                        "webhook": ""
+                    }
+                }
             }
         }
     
@@ -671,7 +718,37 @@ class ConfigManager:
         """Zwraca listę dostępnych giełd"""
         app_config = self.get_app_config()
         return app_config.get("exchanges", {}).get("available", [])
-    
+
+    def get_supported_trading_pairs(self) -> List[str]:
+        """Zwraca listę wspieranych par handlowych dla kreatora botów."""
+
+        app_config = self.get_app_config()
+        trading_cfg = app_config.get("trading", {}) if isinstance(app_config, dict) else {}
+        raw_pairs = trading_cfg.get("supported_pairs")
+
+        if not raw_pairs:
+            default_quote = trading_cfg.get("default_quote_currency", "USDT")
+            return [f"BTC/{default_quote}", f"ETH/{default_quote}"]
+
+        normalised: List[str] = []
+        seen = set()
+        for entry in raw_pairs:
+            if not entry:
+                continue
+            candidate = str(entry).strip().upper()
+            if not candidate:
+                continue
+            candidate = candidate.replace("-", "/").replace(" ", "")
+            if candidate not in seen:
+                normalised.append(candidate)
+                seen.add(candidate)
+
+        if not normalised:
+            default_quote = trading_cfg.get("default_quote_currency", "USDT")
+            return [f"BTC/{default_quote}", f"ETH/{default_quote}"]
+
+        return normalised
+
     def _get_timestamp(self) -> str:
         """Zwraca aktualny timestamp"""
         return datetime.now(timezone.utc).isoformat()
@@ -775,6 +852,190 @@ class ConfigManager:
                 "default_take_profit_percent": 10.0,
                 "slippage_tolerance_percent": 0.5
             }
+
+    # -- High level settings helpers -------------------------------------------------
+
+    def get_risk_settings(self) -> Dict[str, Any]:
+        """Zwraca aktualne ustawienia zarządzania ryzykiem z konfiguracji."""
+        app_config = self.get_app_config()
+        defaults = {
+            "max_position_size": 10.0,
+            "max_daily_trades": 50,
+            "max_open_positions": 10,
+            "default_stop_loss": 2.0,
+            "default_take_profit": 5.0,
+            "trailing_stop_enabled": False,
+            "max_daily_loss": 5.0,
+            "max_drawdown": 10.0,
+            "emergency_stop_enabled": True,
+            "risk_per_trade": 1.0,
+            "kelly_criterion_enabled": False,
+            "compound_profits": True,
+        }
+        stored = app_config.get("risk_management", {}) if isinstance(app_config, dict) else {}
+        combined = {**defaults, **stored}
+        combined.setdefault("updated_at", self._get_timestamp())
+        return combined
+
+    def update_risk_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Aktualizuje ustawienia zarządzania ryzykiem i emituje zdarzenie."""
+        if not isinstance(updates, dict):
+            raise ConfigValidationError("Risk settings update must be a dictionary", "app", "risk_management")
+
+        app_config = self.get_app_config()
+        risk_section = dict(app_config.get("risk_management", {}))
+        risk_section.update(updates)
+        risk_section["updated_at"] = self._get_timestamp()
+        app_config["risk_management"] = risk_section
+        self.save_config("app", app_config)
+
+        meta = {"by": "ui", "ts": risk_section["updated_at"]}
+        self._notify_listeners("risk", "risk_management", risk_section, meta)
+        self.event_bus.publish(
+            EventTypes.CONFIG_RISK_UPDATED,
+            {
+                "config_type": "app",
+                "path": "risk_management",
+                "value": copy.deepcopy(risk_section),
+                "meta": meta,
+            },
+        )
+        return risk_section
+
+    def get_notification_settings(self) -> Dict[str, Any]:
+        """Pobiera ustawienia powiadomień z konfiguracji."""
+        app_config = self.get_app_config()
+        defaults = self._get_default_app_config().get("notifications", {})
+        stored = app_config.get("notifications", {}) if isinstance(app_config, dict) else {}
+
+        merged = copy.deepcopy(defaults)
+
+        for key, value in stored.items():
+            if key in {"types", "channels"} and isinstance(value, dict):
+                merged.setdefault(key, {})
+                merged[key].update(value)
+            else:
+                merged[key] = value
+        return merged
+
+    def update_notification_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Aktualizuje ustawienia powiadomień i zapisuje je do pliku."""
+        if not isinstance(updates, dict):
+            raise ConfigValidationError("Notification settings update must be a dictionary", "app", "notifications")
+
+        app_config = self.get_app_config()
+        existing = self.get_notification_settings()
+        merged = copy.deepcopy(existing)
+
+        for key, value in updates.items():
+            if key in {"types", "channels"} and isinstance(value, dict):
+                merged.setdefault(key, {})
+                merged[key].update(value)
+            else:
+                merged[key] = value
+
+        merged["updated_at"] = self._get_timestamp()
+        app_config["notifications"] = merged
+        self.save_config("app", app_config)
+
+        meta = {"by": "ui", "ts": merged["updated_at"]}
+        self._notify_listeners("app", "notifications", merged, meta)
+        self.event_bus.publish(
+            EventTypes.CONFIG_APP_UPDATED,
+            {
+                "config_type": "app",
+                "path": "notifications",
+                "value": copy.deepcopy(merged),
+                "meta": meta,
+            },
+        )
+        return merged
+
+    def get_general_settings(self) -> Dict[str, Dict[str, Any]]:
+        """Zwraca agregat ustawień ogólnych wykorzystywany w UI ustawień."""
+        app_config = self.get_app_config()
+        ui_config = self.get_ui_config()
+
+        return {
+            "ui": {
+                "theme": ui_config.get("theme", {}).get("current", "dark"),
+                "language": app_config.get("app", {}).get("language", "pl"),
+                "minimize_to_tray": ui_config.get("window", {}).get("minimize_to_tray", True),
+                "start_minimized": ui_config.get("window", {}).get("start_maximized", False),
+            },
+            "startup": {
+                "start_with_system": app_config.get("app", {}).get("start_with_system", False),
+                "auto_start_bots": app_config.get("app", {}).get("auto_start_bots", False),
+                "auto_connect_exchanges": app_config.get("trading", {}).get("auto_connect_exchanges", True),
+            },
+            "security": {
+                "encrypt_config": app_config.get("security", {}).get("encryption_algorithm", "AES-256") != "none",
+                "require_password": app_config.get("security", {}).get("require_password_change_days", 90) > 0,
+                "auto_logout": app_config.get("security", {}).get("auto_lock_minutes", 30) > 0,
+                "logout_timeout": app_config.get("security", {}).get("auto_lock_minutes", 30),
+            },
+            "updates": {
+                "auto_check": app_config.get("app", {}).get("auto_check_updates", True),
+                "beta_updates": app_config.get("app", {}).get("allow_beta_updates", False),
+            },
+        }
+
+    def update_general_settings(self, payload: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Aktualizuje sekcję ogólną (UI, start, bezpieczeństwo, aktualizacje)."""
+        if not isinstance(payload, dict):
+            raise ConfigValidationError("General settings payload must be a dictionary", "app", "general")
+
+        app_config = self.get_app_config()
+        ui_config = self.get_ui_config()
+
+        ui_section = payload.get("ui", {})
+        startup_section = payload.get("startup", {})
+        security_section = payload.get("security", {})
+        updates_section = payload.get("updates", {})
+
+        if ui_section:
+            ui_config.setdefault("theme", {})["current"] = ui_section.get("theme", ui_config.get("theme", {}).get("current", "dark"))
+            ui_config.setdefault("window", {})["minimize_to_tray"] = bool(ui_section.get("minimize_to_tray", True))
+            ui_config.setdefault("window", {})["start_maximized"] = bool(ui_section.get("start_minimized", False))
+            app_config.setdefault("app", {})["language"] = ui_section.get("language", app_config.get("app", {}).get("language", "pl"))
+
+        if startup_section:
+            app_config.setdefault("app", {})["start_with_system"] = bool(startup_section.get("start_with_system", False))
+            app_config.setdefault("app", {})["auto_start_bots"] = bool(startup_section.get("auto_start_bots", False))
+            app_config.setdefault("trading", {})["auto_connect_exchanges"] = bool(startup_section.get("auto_connect_exchanges", True))
+
+        if security_section:
+            app_config.setdefault("security", {})["require_password_change_days"] = 90 if security_section.get("require_password", True) else 0
+            auto_logout = bool(security_section.get("auto_logout", True))
+            timeout_minutes = int(security_section.get("logout_timeout", 30)) if auto_logout else 0
+            app_config.setdefault("security", {})["auto_lock_minutes"] = max(0, timeout_minutes)
+            if security_section.get("encrypt_config", True):
+                app_config.setdefault("security", {})["encryption_algorithm"] = "AES-256"
+            else:
+                app_config.setdefault("security", {})["encryption_algorithm"] = "none"
+
+        if updates_section:
+            app_config.setdefault("app", {})["auto_check_updates"] = bool(updates_section.get("auto_check", True))
+            app_config.setdefault("app", {})["allow_beta_updates"] = bool(updates_section.get("beta_updates", False))
+
+        timestamp = self._get_timestamp()
+        app_config.setdefault("app", {})["general_updated_at"] = timestamp
+
+        self.save_config("ui", ui_config)
+        self.save_config("app", app_config)
+
+        meta = {"by": "ui", "ts": timestamp}
+        self._notify_listeners("app", "general", payload, meta)
+        self.event_bus.publish(
+            EventTypes.CONFIG_APP_UPDATED,
+            {
+                "config_type": "app",
+                "path": "general",
+                "value": copy.deepcopy(payload),
+                "meta": meta,
+            },
+        )
+        return payload
 
 # Globalna instancja menedżera konfiguracji
 _config_manager = None

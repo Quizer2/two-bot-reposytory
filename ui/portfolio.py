@@ -6,6 +6,7 @@ statystykach i wydajności portfela.
 """
 
 import sys
+import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal
@@ -180,6 +181,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.config_manager import get_config_manager, get_ui_setting, get_app_setting
+from core.portfolio_manager import get_portfolio_manager, PortfolioSummary, AssetPosition
 from utils.logger import get_logger, LogType
 from utils.helpers import FormatHelper, CalculationHelper
 
@@ -590,9 +592,10 @@ class PortfolioStatsWidget(QWidget):
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, PortfolioStatsWidget will not function properly")
             return
-            
+
         try:
             super().__init__(parent)
+            self.stats_labels: Dict[Tuple[str, str], QLabel] = {}
             self.setup_ui()
         except Exception as e:
             print(f"Error initializing PortfolioStatsWidget: {e}")
@@ -669,30 +672,80 @@ class PortfolioStatsWidget(QWidget):
         
         layout.addStretch()
     
-    def create_stat_group(self, title: str, stats: List[Tuple[str, str]], 
+    def create_stat_group(self, title: str, stats: List[Tuple[str, str]],
                          grid: QGridLayout, row: int, col: int):
         """Tworzy grupę statystyk"""
         group = QGroupBox(title)
         group_layout = QFormLayout(group)
-        
+
         for stat_name, stat_value in stats:
             label = QLabel(stat_value)
             label.setStyleSheet("font-weight: bold;")
             group_layout.addRow(stat_name + ":", label)
-        
+            if hasattr(self, 'stats_labels'):
+                self.stats_labels[(title, stat_name)] = label
+
         grid.addWidget(group, row, col)
-    
+
     def update_stats(self, portfolio_data: Dict):
         """Aktualizuje statystyki portfela"""
-        # TODO: Implementuj aktualizację statystyk na podstawie danych
-        pass
+        if not hasattr(self, 'stats_labels'):
+            return
+
+        summary: Optional[PortfolioSummary] = portfolio_data.get('summary') if isinstance(portfolio_data, dict) else None
+        balances: List[Dict[str, Any]] = portfolio_data.get('balances', []) if isinstance(portfolio_data, dict) else []
+        transactions: List[Dict[str, Any]] = portfolio_data.get('transactions', []) if isinstance(portfolio_data, dict) else []
+
+        total_value = summary.total_value if summary else sum(item.get('usd_value', 0.0) for item in balances)
+        daily_change = summary.daily_change if summary else 0.0
+        daily_change_percent = summary.daily_change_percent if summary else 0.0
+
+        largest_position = None
+        if summary and summary.positions:
+            largest_position = max(summary.positions, key=lambda pos: pos.value)
+        elif balances:
+            largest_position = max(balances, key=lambda pos: pos.get('usd_value', 0.0))
+
+        allocation_text = "N/A"
+        if largest_position:
+            if isinstance(largest_position, AssetPosition):
+                share = (largest_position.value / total_value * 100) if total_value else 0.0
+                allocation_text = f"{largest_position.symbol} ({share:.2f}%)"
+            else:
+                value = float(largest_position.get('usd_value', 0.0))
+                share = (value / total_value * 100) if total_value else 0.0
+                allocation_text = f"{largest_position.get('symbol', 'N/A')} ({share:.2f}%)"
+
+        stats_payload = {
+            ('Ogólne', 'Całkowita wartość'): f"${total_value:,.2f}",
+            ('Ogólne', 'Zmiana 24h'): f"${daily_change:+,.2f} ({daily_change_percent:+.2f}%)",
+            ('Ogólne', 'Zmiana 7d'): "N/A",
+            ('Ogólne', 'Zmiana 30d'): "N/A",
+            ('Handel', 'Całkowity P&L'): f"${(summary.total_profit_loss if summary else 0.0):+,.2f}",
+            ('Handel', 'Dzienny P&L'): f"${daily_change:+,.2f}",
+            ('Handel', 'Liczba transakcji'): str(len(transactions)),
+            ('Handel', 'Wskaźnik wygranych'): portfolio_data.get('win_rate', 'N/A'),
+            ('Alokacja', 'Największa pozycja'): allocation_text,
+            ('Alokacja', 'Liczba aktywów'): str(len(summary.positions) if summary else len(balances)),
+            ('Alokacja', 'Dywersyfikacja'): portfolio_data.get('diversification', 'N/A'),
+            ('Alokacja', 'Wolne środki'): f"${(summary.available_balance if summary else 0.0):,.2f}",
+            ('Ryzyko', 'Maksymalny drawdown'): f"{portfolio_data.get('max_drawdown', 0.0):.2f}%",
+            ('Ryzyko', 'Volatility (30d)'): portfolio_data.get('volatility_30d', 'N/A'),
+            ('Ryzyko', 'Sharpe Ratio'): portfolio_data.get('sharpe_ratio', 'N/A'),
+            ('Ryzyko', 'Beta'): portfolio_data.get('beta', 'N/A'),
+        }
+
+        for key, value in stats_payload.items():
+            label = self.stats_labels.get(key)
+            if label:
+                label.setText(str(value))
 
 class PortfolioWidget(QWidget):
     """Główny widget portfela"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        
+
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, PortfolioWidget will not function properly")
             return
@@ -704,13 +757,21 @@ class PortfolioWidget(QWidget):
             print(f"Error initializing config/logger: {e}")
             self.config_manager = None
             self.logger = None
-        
+
+        try:
+            self.portfolio_manager = get_portfolio_manager()
+        except Exception as e:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(f"Failed to obtain PortfolioManager: {e}")
+            self.portfolio_manager = None
+
         # Dane portfela
         self.portfolio_data = {}
         self.balances = {}
         self.transactions = []
         self.balance_data = []  # Lista danych o balansach dla kart
-        
+        self._portfolio_manager_initialized = False
+
         # Timer odświeżania
         try:
             self.refresh_timer = QTimer()
@@ -727,7 +788,50 @@ class PortfolioWidget(QWidget):
             print(f"Error setting up Portfolio UI: {e}")
             if hasattr(self, 'logger') and self.logger:
                 self.logger.error(f"Portfolio UI setup failed: {e}")
-    
+
+    def _run_async_task(self, coro):
+        """Uruchamia coroutine w dedykowanej pętli event loop."""
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            try:
+                asyncio.set_event_loop(None)
+            except Exception:
+                pass
+            loop.close()
+
+    def _ensure_portfolio_manager_initialized(self):
+        if not self.portfolio_manager or self._portfolio_manager_initialized:
+            return
+
+        try:
+            self._run_async_task(self.portfolio_manager.initialize())
+            self._portfolio_manager_initialized = True
+        except Exception as exc:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(f"Failed to initialize PortfolioManager: {exc}")
+
+    def _ensure_trading_manager(self):
+        if hasattr(self, 'trading_manager') and self.trading_manager:
+            return
+
+        from app.trading_mode_manager import TradingModeManager
+
+        config = get_config_manager()
+        self.trading_manager = TradingModeManager(config)
+
+    def _set_trading_mode_combo(self, text: str):
+        if not hasattr(self, 'trading_mode_combo'):
+            return
+
+        try:
+            self.trading_mode_combo.blockSignals(True)
+            self.trading_mode_combo.setCurrentText(text)
+        finally:
+            self.trading_mode_combo.blockSignals(False)
+
     def setup_ui(self):
         """Konfiguracja interfejsu"""
         layout = QVBoxLayout(self)
@@ -960,11 +1064,8 @@ class PortfolioWidget(QWidget):
     def on_trading_mode_changed(self, mode_text):
         """Obsługuje zmianę trybu tradingowego"""
         try:
-            if not hasattr(self, 'trading_manager'):
-                from app.trading_mode_manager import TradingModeManager
-                config = get_config_manager()
-                self.trading_manager = TradingModeManager(config)
-            
+            self._ensure_trading_manager()
+
             # Ustaw tryb
             if mode_text == "Paper Trading":
                 import asyncio
@@ -981,7 +1082,39 @@ class PortfolioWidget(QWidget):
             else:  # Live Trading
                 import asyncio
                 from app.trading_mode_manager import TradingMode
-                asyncio.run(self.trading_manager.switch_mode(TradingMode.LIVE))
+
+                # Sprawdź czy live trading jest dostępny
+                if not self.trading_manager.refresh_live_trading_status():
+                    reason = self.trading_manager.get_live_trading_block_reason() or "Brak kluczy API"
+                    self._set_trading_mode_combo("Paper Trading")
+                    self.mode_status_label.setText(f"Live Trading zablokowany – {reason}")
+                    self.mode_status_label.setStyleSheet("""
+                        QLabel {
+                            color: #FFB74D;
+                            font-size: 11px;
+                            font-style: italic;
+                            font-weight: bold;
+                        }
+                    """)
+                    self.refresh_data()
+                    return
+
+                switched = asyncio.run(self.trading_manager.switch_mode(TradingMode.LIVE))
+                if not switched:
+                    reason = self.trading_manager.get_live_trading_block_reason() or "Brak kluczy API"
+                    self._set_trading_mode_combo("Paper Trading")
+                    self.mode_status_label.setText(f"Live Trading zablokowany – {reason}")
+                    self.mode_status_label.setStyleSheet("""
+                        QLabel {
+                            color: #FFB74D;
+                            font-size: 11px;
+                            font-style: italic;
+                            font-weight: bold;
+                        }
+                    """)
+                    self.refresh_data()
+                    return
+
                 self.mode_status_label.setText("Live Trading - Prawdziwe środki!")
                 self.mode_status_label.setStyleSheet("""
                     QLabel {
@@ -991,13 +1124,13 @@ class PortfolioWidget(QWidget):
                         font-weight: bold;
                     }
                 """)
-            
+
             # Odśwież dane po zmianie trybu
             self.refresh_data()
-            
+
             if hasattr(self, 'logger'):
                 self.logger.info(f"Trading mode changed to: {mode_text}")
-                
+
         except Exception as e:
             if hasattr(self, 'logger'):
                 self.logger.error(f"Error changing trading mode: {e}")
@@ -1008,13 +1141,20 @@ class PortfolioWidget(QWidget):
         try:
             if not hasattr(self, 'trading_mode_combo'):
                 return
-                
+
+            self._ensure_trading_manager()
+
             # Pobierz aktualny tryb z konfiguracji
             current_mode = self.config_manager.get_setting('app', 'trading.default_mode', 'paper')
-            
+
+            if current_mode != 'paper' and not self.trading_manager.live_trading_available():
+                current_mode = 'paper'
+                if hasattr(self, 'logger'):
+                    self.logger.info("Live Trading wymuszony na Paper – brak kluczy API")
+
             # Ustaw odpowiednią wartość w combobox
             if current_mode == 'paper':
-                self.trading_mode_combo.setCurrentText("Paper Trading")
+                self._set_trading_mode_combo("Paper Trading")
                 self.mode_status_label.setText("Paper Trading - Fikcyjne środki")
                 self.mode_status_label.setStyleSheet("""
                     QLabel {
@@ -1024,7 +1164,7 @@ class PortfolioWidget(QWidget):
                     }
                 """)
             else:  # live
-                self.trading_mode_combo.setCurrentText("Live Trading")
+                self._set_trading_mode_combo("Live Trading")
                 self.mode_status_label.setText("Live Trading - Prawdziwe środki!")
                 self.mode_status_label.setStyleSheet("""
                     QLabel {
@@ -1034,7 +1174,7 @@ class PortfolioWidget(QWidget):
                         font-weight: bold;
                     }
                 """)
-                
+
             if hasattr(self, 'logger'):
                 self.logger.info(f"Loaded trading mode from config: {current_mode}")
                 
@@ -1109,40 +1249,150 @@ class PortfolioWidget(QWidget):
         """Odświeża dane portfela"""
         if not PYQT_AVAILABLE:
             return
-            
+
+        self._ensure_portfolio_manager_initialized()
+
         if hasattr(self, 'logger'):
-            self.logger.info("Portfolio refresh started - loading data from API")
-            
-        try:
-            # Ładuj prawdziwe dane z API
-            import asyncio
+            self.logger.info("Refreshing portfolio snapshot from PortfolioManager")
+
+        snapshot = self._load_portfolio_snapshot()
+        if not snapshot:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.warning("Portfolio snapshot unavailable – reloading fallback data")
             try:
-                if hasattr(self, 'logger'):
-                    self.logger.info("Attempting to load real portfolio data from exchange API")
-                asyncio.run(self.load_real_data())
-            except RuntimeError:
-                # Jeśli już jesteśmy w pętli asyncio, użyj synchronicznej wersji
-                if hasattr(self, 'logger'):
-                    self.logger.info("AsyncIO runtime error - falling back to sample data")
-                asyncio.run(self.load_empty_data())
-                
-            if hasattr(self, 'logger'):
-                self.logger.info("Updating portfolio UI components")
-                
-            self.update_portfolio_summary()
-            self.update_balances_display()
-            self.update_transaction_history()
-            
-            if hasattr(self, 'logger'):
-                self.logger.info("Portfolio data refreshed successfully - UI updated")
-            
-        except Exception as e:
-            if hasattr(self, 'logger'):
-                self.logger.error(f"Error refreshing portfolio data: {e}")
-            print(f"Portfolio refresh error: {e}")
-            # Fallback do pustych danych
-            import asyncio
-            asyncio.run(self.load_empty_data())
+                self._run_async_task(self.load_empty_data())
+                self.update_portfolio_summary()
+                self.update_balances_display()
+                self.update_transaction_history()
+            except Exception as exc:
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.error(f"Failed to load fallback portfolio data: {exc}")
+            return
+
+        summary, balances, transactions = snapshot
+
+        trading_mode = get_app_setting('trading.mode', 'paper')
+
+        zero_override = None
+        if trading_mode != 'paper':
+            try:
+                self._ensure_trading_manager()
+                if getattr(self, 'trading_manager', None) and not self.trading_manager.live_trading_available():
+                    zero_override = self._run_async_task(self.trading_manager.get_zeroed_live_view())
+            except Exception as exc:
+                if hasattr(self, 'logger') and self.logger:
+                    self.logger.debug(f"Live snapshot override failed: {exc}")
+
+        if zero_override:
+            summary = zero_override.get('summary')
+            balances = zero_override.get('balances', [])
+            transactions = zero_override.get('transactions', [])
+            trading_mode = 'live_disabled'
+
+        summary_payload = self._coerce_summary_payload(summary)
+
+        self.portfolio_data = {
+            'total_value': summary_payload['total_value'],
+            'change_24h': summary_payload['daily_change'],
+            'change_24h_percent': summary_payload['daily_change_percent'],
+            'daily_pnl': summary_payload['daily_change'],
+            'mode': trading_mode,
+            'trades_count': len(transactions),
+            'initial_balance': summary_payload['invested_amount'],
+            'available_balance': summary_payload['available_balance'],
+        }
+
+        self.balance_data = balances
+        if isinstance(balances, list):
+            self.balances = {item.get('symbol', f"asset_{idx}"): item for idx, item in enumerate(balances)}
+        elif isinstance(balances, dict):
+            self.balances = balances
+        else:
+            self.balances = {}
+
+        self.transactions = transactions
+
+        self.update_portfolio_summary()
+        self.update_balances_display()
+        self.update_transaction_history()
+
+        if hasattr(self, 'portfolio_stats') and self.portfolio_stats:
+            stats_payload = {
+                'summary': summary,
+                'balances': balances,
+                'transactions': transactions,
+            }
+            self.portfolio_stats.update_stats(stats_payload)
+
+        if hasattr(self, 'logger'):
+            self.logger.info("Portfolio UI refreshed with latest data")
+
+    def _coerce_summary_payload(self, summary: Any) -> Dict[str, float]:
+        """Normalizuje strukturę podsumowania portfela do słownika z wartościami liczbowymi."""
+        payload = {
+            'total_value': 0.0,
+            'daily_change': 0.0,
+            'daily_change_percent': 0.0,
+            'available_balance': 0.0,
+            'invested_amount': 0.0,
+            'total_profit_loss': 0.0,
+            'total_profit_loss_percent': 0.0,
+        }
+
+        if summary is None:
+            return payload
+
+        try:
+            for key in list(payload.keys()):
+                if hasattr(summary, key):
+                    payload[key] = float(getattr(summary, key) or 0.0)
+                elif isinstance(summary, dict):
+                    payload[key] = float(summary.get(key, 0.0) or 0.0)
+        except Exception:
+            # Zignoruj nieprzewidziane formaty i wróć domyślne zera
+            pass
+
+        return payload
+
+    def _load_portfolio_snapshot(self):
+        if not self.portfolio_manager:
+            return None
+
+        async def _fetch():
+            summary = await self.portfolio_manager.get_portfolio_summary()
+            positions = summary.positions if summary else []
+
+            balances: List[Dict[str, Any]] = []
+            for position in positions:
+                if isinstance(position, AssetPosition):
+                    balances.append({
+                        'symbol': position.symbol,
+                        'balance': position.amount,
+                        'usd_value': position.value,
+                        'change_24h': position.profit_loss_percent,
+                        'price': position.current_price,
+                        'average_price': position.average_price,
+                        'last_update': position.last_updated.isoformat(),
+                        'exchange': get_app_setting('trading.exchange', 'N/A'),
+                    })
+
+            trades: List[Dict[str, Any]] = []
+            data_manager = getattr(self.portfolio_manager, 'data_manager', None)
+            if data_manager and hasattr(data_manager, 'get_recent_trades'):
+                try:
+                    trades = await data_manager.get_recent_trades(limit=100)
+                except Exception as exc:
+                    if hasattr(self, 'logger') and self.logger:
+                        self.logger.warning(f"Failed to load recent trades: {exc}")
+
+            return summary, balances, trades
+
+        try:
+            return self._run_async_task(_fetch())
+        except Exception as exc:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.error(f"Error loading portfolio snapshot: {exc}")
+            return None
     
     async def load_real_data(self):
         """Ładuje prawdziwe dane portfolio z API"""
@@ -1447,15 +1697,17 @@ class PortfolioWidget(QWidget):
     async def load_real_data(self):
         """Ładuje prawdziwe dane z API przez TradingModeManager"""
         try:
-            if not hasattr(self, 'trading_manager'):
-                from app.trading_mode_manager import TradingModeManager
-                config = get_config_manager()
-                self.trading_manager = TradingModeManager(config)
-                await self.trading_manager.initialize()
-            
+            self._ensure_trading_manager()
+            if hasattr(self.trading_manager, 'initialize'):
+                try:
+                    await self.trading_manager.initialize()
+                except Exception:
+                    # Jeśli inicjalizacja już się odbyła lub nie jest wymagana, pomiń błąd
+                    pass
+
             # Pobierz aktualne salda w zależności od trybu (Paper/Live)
             self.balances = await self.trading_manager.get_current_balances()
-            
+
             # Pobierz statystyki handlowe
             stats = await self.trading_manager.get_trading_statistics()
             
@@ -1481,133 +1733,63 @@ class PortfolioWidget(QWidget):
                 balance_entry['exchange'] = 'Binance'  # Domyślna giełda
                 balance_entry['last_update'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 self.balance_data.append(balance_entry)
-            
+
+            if not self.balances:
+                self.transactions = []
+
             self.logger.info(f"Załadowano prawdziwe dane portfela w trybie: {self.portfolio_data.get('mode', 'unknown')}")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd ładowania prawdziwych danych: {e}")
             # Fallback do pustych danych
             await self.load_empty_data()
-    
+
     async def load_empty_data(self):
         """Ładuje puste dane jako fallback"""
-        self.portfolio_data = {
-            'total_value': 0.0,
-            'change_24h': 0.0,
-            'change_24h_percent': 0.0,
-            'daily_pnl': 0.0,
-            'mode': 'paper',
-            'trades_count': 0,
-            'initial_balance': 0.0
-        }
-        
-        self.balances = {}
-        self.balance_data = []
+        override = None
+        try:
+            self._ensure_trading_manager()
+            if getattr(self, 'trading_manager', None):
+                override = await self.trading_manager.get_zeroed_live_view()
+        except Exception as exc:
+            if hasattr(self, 'logger') and self.logger:
+                self.logger.debug(f"Zero fallback unavailable, using static zeros: {exc}")
 
-        # Więcej przykładowych transakcji
-        self.transactions = [
-            {
-                'timestamp': datetime.now() - timedelta(minutes=30),
-                'bot_id': 1,
-                'pair': 'BTC/USDT',
-                'side': 'buy',
-                'amount': 0.002,
-                'price': 45230.00,
-                'status': 'filled',
-                'fee': 0.90
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=1),
-                'bot_id': 2,
-                'pair': 'ETH/USDT',
-                'side': 'sell',
-                'amount': 0.15,
-                'price': 2995.00,
-                'status': 'filled',
-                'fee': 0.45
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=2),
-                'bot_id': 3,
-                'pair': 'SOL/USDT',
-                'side': 'buy',
-                'amount': 5.0,
-                'price': 149.80,
-                'status': 'filled',
-                'fee': 0.75
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=3),
-                'bot_id': 1,
-                'pair': 'ADA/USDT',
-                'side': 'buy',
-                'amount': 1000,
-                'price': 0.495,
-                'status': 'filled',
-                'fee': 0.25
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=4),
-                'bot_id': 2,
-                'pair': 'DOT/USDT',
-                'side': 'sell',
-                'amount': 50,
-                'price': 7.15,
-                'status': 'filled',
-                'fee': 0.18
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=6),
-                'bot_id': 3,
-                'pair': 'BTC/USDT',
-                'side': 'buy',
-                'amount': 0.001,
-                'price': 44890.00,
-                'status': 'filled',
-                'fee': 0.45
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=8),
-                'bot_id': 1,
-                'pair': 'ETH/USDT',
-                'side': 'sell',
-                'amount': 0.2,
-                'price': 3010.00,
-                'status': 'filled',
-                'fee': 0.60
-            },
-            {
-                'timestamp': datetime.now() - timedelta(hours=12),
-                'bot_id': 2,
-                'pair': 'SOL/USDT',
-                'side': 'buy',
-                'amount': 10,
-                'price': 148.50,
-                'status': 'filled',
-                'fee': 1.49
-            },
-            {
-                'timestamp': datetime.now() - timedelta(days=1),
-                'bot_id': 3,
-                'pair': 'ADA/USDT',
-                'side': 'sell',
-                'amount': 500,
-                'price': 0.505,
-                'status': 'filled',
-                'fee': 0.13
-            },
-            {
-                'timestamp': datetime.now() - timedelta(days=1, hours=2),
-                'bot_id': 1,
-                'pair': 'DOT/USDT',
-                'side': 'buy',
-                'amount': 70,
-                'price': 6.95,
-                'status': 'filled',
-                'fee': 0.49
+        if override:
+            summary_payload = self._coerce_summary_payload(override.get('summary'))
+            self.portfolio_data = {
+                'total_value': summary_payload['total_value'],
+                'change_24h': summary_payload['daily_change'],
+                'change_24h_percent': summary_payload['daily_change_percent'],
+                'daily_pnl': summary_payload['daily_change'],
+                'mode': 'live_disabled',
+                'trades_count': 0,
+                'initial_balance': summary_payload['invested_amount']
             }
-        ]
-        
+            self.balances = {}
+            self.balance_data = override.get('balances', [])
+            if isinstance(self.balance_data, list):
+                self.balances = {item.get('symbol', f"asset_{idx}"): item for idx, item in enumerate(self.balance_data)}
+            elif isinstance(self.balance_data, dict):
+                self.balances = self.balance_data
+            else:
+                self.balances = {}
+            self.transactions = []
+        else:
+            self.portfolio_data = {
+                'total_value': 0.0,
+                'change_24h': 0.0,
+                'change_24h_percent': 0.0,
+                'daily_pnl': 0.0,
+                'mode': 'paper',
+                'trades_count': 0,
+                'initial_balance': 0.0
+            }
+
+            self.balances = {}
+            self.balance_data = []
+            self.transactions = []
+
         # Dodaj logowanie dla debugowania
         if hasattr(self, 'logger') and self.logger:
             self.logger.info(f"Loaded sample data: {len(self.balances)} balances, {len(self.transactions)} transactions")
@@ -1625,12 +1807,15 @@ class PortfolioWidget(QWidget):
         
         # Aktualizuj przełącznik trybu
         if hasattr(self, 'trading_mode_combo'):
-            current_mode = "Paper Trading" if mode == 'paper' else "Live Trading"
+            if mode == 'paper':
+                current_mode = "Paper Trading"
+            else:
+                current_mode = "Live Trading"
             if self.trading_mode_combo.currentText() != current_mode:
                 self.trading_mode_combo.blockSignals(True)
                 self.trading_mode_combo.setCurrentText(current_mode)
                 self.trading_mode_combo.blockSignals(False)
-        
+
         if hasattr(self, 'mode_status_label'):
             if mode == 'paper':
                 self.mode_status_label.setText(f"Paper Trading - Fikcyjne środki (Start: ${initial_balance:,.2f})")
@@ -1639,6 +1824,16 @@ class PortfolioWidget(QWidget):
                         color: #4CAF50;
                         font-size: 11px;
                         font-style: italic;
+                    }
+                """)
+            elif mode == 'live_disabled':
+                self.mode_status_label.setText("Live Trading zablokowany – uzupełnij klucze API w ustawieniach")
+                self.mode_status_label.setStyleSheet("""
+                    QLabel {
+                        color: #FFC107;
+                        font-size: 11px;
+                        font-style: italic;
+                        font-weight: bold;
                     }
                 """)
             else:

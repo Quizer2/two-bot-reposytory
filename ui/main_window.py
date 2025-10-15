@@ -20,7 +20,7 @@ try:
         QMenu, QMessageBox, QProgressBar, QTableWidget, QTableWidgetItem,
         QHeaderView, QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox,
         QCheckBox, QGroupBox, QTextEdit, QListWidget, QListWidgetItem,
-        QAbstractItemView
+        QAbstractItemView, QFileDialog
     )
     from PyQt6.QtCore import (
         Qt, QTimer, QThread, pyqtSignal, QSize, QPoint, QRect,
@@ -40,6 +40,30 @@ except ImportError:
     class QHBoxLayout: pass
     class QLabel: pass
     class QPushButton: pass
+    class QFileDialog:
+        class DialogCode:
+            Accepted = 1
+
+        class AcceptMode:
+            AcceptSave = 1
+
+        def __init__(self, *args, **kwargs):
+            self._files = []
+
+        def setNameFilter(self, *args, **kwargs):
+            pass
+
+        def setAcceptMode(self, *args, **kwargs):
+            pass
+
+        def setDefaultSuffix(self, *args, **kwargs):
+            pass
+
+        def exec(self):
+            return 0
+
+        def selectedFiles(self):
+            return self._files
 
 # Import lokalnych modułów
 import os
@@ -48,6 +72,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.config_manager import get_config_manager, get_ui_setting, get_app_setting
 from utils.logger import get_logger, LogType
 from app.production_data_manager import ProductionDataManager, get_production_data_manager
+from core.updated_bot_manager import get_updated_bot_manager
 
 # Import stylów
 try:
@@ -780,7 +805,7 @@ class MainWindow(QMainWindow):
         self.start_data_refresh()
         
         self.logger.info("Main window initialized")
-    
+
 
         self.live_badge = QLabel('PAPER')
         self.live_badge.setObjectName('liveBadge')
@@ -788,6 +813,19 @@ class MainWindow(QMainWindow):
             self.statusBar().addPermanentWidget(self.live_badge)
         except Exception:
             pass
+
+    def _run_coroutine_blocking(self, coro):
+        """Uruchamia coroutine w dedykowanej pętli event loop."""
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            return loop.run_until_complete(coro)
+        finally:
+            try:
+                asyncio.set_event_loop(None)
+            except Exception:
+                pass
+            loop.close()
 
     def setup_ui(self):
         """Konfiguracja głównego interfejsu"""
@@ -2661,19 +2699,40 @@ class MainWindow(QMainWindow):
     def update_status_bar(self):
         """Aktualizuje pasek statusu"""
         try:
-            # Status połączenia
+            connection_text = "🔴 Offline"
+            if hasattr(self, 'integrated_data_manager') and self.integrated_data_manager:
+                try:
+                    system_status = self.integrated_data_manager.get_cached_system_status() if hasattr(self.integrated_data_manager, 'get_cached_system_status') else None
+                    if not system_status:
+                        system_status = self._run_coroutine_blocking(self.integrated_data_manager.get_system_status())
+                    if system_status and system_status.get('status') in {'ok', 'online'}:
+                        connection_text = "🟢 Połączono"
+                    else:
+                        connection_text = "🟡 Ograniczone"
+                except Exception:
+                    connection_text = "🟠 Sprawdzanie"
+
             if hasattr(self, 'status_connection') and self.status_connection:
-                self.status_connection.setText("🟢 Połączono")
-            
-            # Liczba botów
-            # TODO: Pobierz rzeczywistą liczbę botów
+                self.status_connection.setText(connection_text)
+
+            running_bots = 0
+            total_bots = 0
+            try:
+                bot_manager = get_updated_bot_manager()
+                if bot_manager:
+                    statuses = self._run_coroutine_blocking(bot_manager.get_all_bots_status())
+                    total_bots = len(statuses)
+                    running_bots = sum(1 for status in statuses if status.get('active'))
+            except Exception as exc:
+                self.logger.warning(f"Unable to fetch bot status summary: {exc}")
+
             if hasattr(self, 'status_bots') and self.status_bots:
-                self.status_bots.setText("Boty: 2/3")
-            
-            # Ostatnia aktualizacja
-            if hasattr(self, 'status_update') and self.status_update:
-                now = datetime.now().strftime("%H:%M:%S")
-                self.status_update.setText(f"Ostatnia aktualizacja: {now}")
+                self.status_bots.setText(f"Boty: {running_bots}/{total_bots}")
+
+                # Ostatnia aktualizacja
+                if hasattr(self, 'status_update') and self.status_update:
+                    now = datetime.now().strftime("%H:%M:%S")
+                    self.status_update.setText(f"Ostatnia aktualizacja: {now}")
         except Exception as e:
             self.logger.error(f"Error updating status bar: {e}")
     
@@ -2898,47 +2957,144 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Błąd", "Nie można pobrać danych bota")
                 return
             
-            # Tutaj można dodać logikę zapisywania do bazy danych
-            # Na razie tylko pokaż komunikat
-            self.logger.info(f"FLOW: UI → Config → Bot '{bot_data.get('name', 'Nowy Bot')}' został pomyślnie utworzony")
+            if not self.integrated_data_manager:
+                raise RuntimeError("IntegratedDataManager is not available")
+
+            created = self._run_coroutine_blocking(
+                self.integrated_data_manager.create_bot(bot_data)
+            )
+
+            if not created:
+                QMessageBox.critical(self, "Błąd", "Nie udało się zapisać nowego bota.")
+                return
+
+            self.logger.info(f"FLOW: UI → Config → Bot '{bot_data.get('name', 'Nowy Bot')}' został zapisany i zarejestrowany")
             QMessageBox.information(self, "Sukces", f"Bot '{bot_data.get('name', 'Nowy Bot')}' został utworzony!")
-            
+
             dialog.accept()
-            
-            # Odśwież dane na dashboardzie
+
             self.logger.info("FLOW: UI → Odświeżanie danych dashboardu po utworzeniu bota")
             self.refresh_data()
-            
+            self.update_status_bar()
+
         except Exception as e:
             QMessageBox.critical(self, "Błąd", f"Nie można zapisać bota: {e}")
-    
+
     def start_all_bots(self):
         """Uruchamia wszystkie boty"""
         self.logger.info("FLOW: UI → Rozpoczęcie uruchamiania wszystkich botów przez użytkownika")
-        # TODO: Implementuj uruchamianie wszystkich botów
-        QMessageBox.information(self, "Boty", "Uruchamianie wszystkich botów...")
-        self.logger.info("FLOW: UI → Zakończono próbę uruchomienia wszystkich botów")
-    
+        try:
+            bot_manager = get_updated_bot_manager()
+            if not bot_manager:
+                raise RuntimeError("UpdatedBotManager is unavailable")
+            statuses = self._run_coroutine_blocking(bot_manager.get_all_bots_status())
+            for status in statuses:
+                if not status.get('active'):
+                    self._run_coroutine_blocking(bot_manager.start_bot(status['id']))
+
+            QMessageBox.information(self, "Boty", "Wszystkie boty zostały uruchomione.")
+            self.update_status_bar()
+            self.logger.info("FLOW: UI → Uruchomiono wszystkie boty")
+        except Exception as exc:
+            self.logger.error(f"FLOW: UI → Nie udało się uruchomić wszystkich botów: {exc}")
+            QMessageBox.critical(self, "Błąd", f"Nie udało się uruchomić wszystkich botów: {exc}")
+
     def stop_all_bots(self):
         """Zatrzymuje wszystkie boty"""
         self.logger.info("FLOW: UI → Rozpoczęcie zatrzymywania wszystkich botów przez użytkownika")
-        # TODO: Implementuj zatrzymywanie wszystkich botów
-        QMessageBox.information(self, "Boty", "Zatrzymywanie wszystkich botów...")
-        self.logger.info("FLOW: UI → Zakończono próbę zatrzymania wszystkich botów")
-    
+        try:
+            bot_manager = get_updated_bot_manager()
+            if not bot_manager:
+                raise RuntimeError("UpdatedBotManager is unavailable")
+            running_ids = [status['id'] for status in self._run_coroutine_blocking(bot_manager.get_all_bots_status()) if status.get('active')]
+            for bot_id in running_ids:
+                self._run_coroutine_blocking(bot_manager.stop_bot(bot_id))
+
+            QMessageBox.information(self, "Boty", "Wszystkie boty zostały zatrzymane.")
+            self.update_status_bar()
+            self.logger.info("FLOW: UI → Zatrzymano wszystkie boty")
+        except Exception as exc:
+            self.logger.error(f"FLOW: UI → Nie udało się zatrzymać wszystkich botów: {exc}")
+            QMessageBox.critical(self, "Błąd", f"Nie udało się zatrzymać wszystkich botów: {exc}")
+
     def toggle_sidebar(self):
         """Przełącza widoczność sidebara"""
         self.sidebar.setVisible(not self.sidebar.isVisible())
-    
+
     def import_config(self):
         """Importuje konfigurację"""
-        # TODO: Implementuj import konfiguracji
-        QMessageBox.information(self, "Import", "Import konfiguracji zostanie wkrótce zaimplementowany.")
-    
+        try:
+            file_dialog = QFileDialog(self)
+            file_dialog.setNameFilter("JSON Files (*.json)")
+            if file_dialog.exec() != QFileDialog.DialogCode.Accepted:
+                return
+
+            selected_files = file_dialog.selectedFiles()
+            if not selected_files:
+                return
+
+            file_path = selected_files[0]
+            with open(file_path, 'r', encoding='utf-8') as handle:
+                import json
+                bot_config = json.load(handle)
+
+            if not self.integrated_data_manager:
+                raise RuntimeError("Brak IntegratedDataManager do importu konfiguracji")
+
+            created = self._run_coroutine_blocking(
+                self.integrated_data_manager.create_bot(bot_config)
+            )
+
+            if created:
+                QMessageBox.information(self, "Import", "Konfiguracja została zaimportowana i zarejestrowana.")
+                self.refresh_data()
+                self.update_status_bar()
+            else:
+                QMessageBox.critical(self, "Import", "Nie udało się zaimportować konfiguracji bota.")
+
+        except Exception as exc:
+            self.logger.error(f"Import konfiguracji nie powiódł się: {exc}")
+            QMessageBox.critical(self, "Import", f"Błąd importu: {exc}")
+
     def export_data(self):
         """Eksportuje dane"""
-        # TODO: Implementuj eksport danych
-        QMessageBox.information(self, "Eksport", "Eksport danych zostanie wkrótce zaimplementowany.")
+        try:
+            if not self.integrated_data_manager:
+                raise RuntimeError("Brak IntegratedDataManager do eksportu danych")
+
+            snapshot = {
+                'portfolio': None,
+                'bots': None,
+            }
+
+            snapshot['portfolio'] = self._run_coroutine_blocking(
+                self.integrated_data_manager.get_portfolio_data()
+            )
+            snapshot['bots'] = self._run_coroutine_blocking(
+                self.integrated_data_manager.get_bot_management_data()
+            )
+
+            file_dialog = QFileDialog(self)
+            file_dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+            file_dialog.setNameFilter("JSON Files (*.json)")
+            file_dialog.setDefaultSuffix("json")
+            if file_dialog.exec() != QFileDialog.DialogCode.Accepted:
+                return
+
+            selected_files = file_dialog.selectedFiles()
+            if not selected_files:
+                return
+
+            file_path = selected_files[0]
+            import json
+            with open(file_path, 'w', encoding='utf-8') as handle:
+                json.dump(snapshot, handle, indent=2, ensure_ascii=False, default=str)
+
+            QMessageBox.information(self, "Eksport", f"Dane zostały wyeksportowane do {file_path}.")
+
+        except Exception as exc:
+            self.logger.error(f"Eksport danych nie powiódł się: {exc}")
+            QMessageBox.critical(self, "Eksport", f"Nie udało się wyeksportować danych: {exc}")
     
     def show_about(self):
         """Pokazuje okno o programie"""
@@ -3845,7 +4001,11 @@ class MainWindow(QMainWindow):
             
             # Utwórz instancję tylko raz
             if self.settings_widget is None:
-                self.settings_widget = SettingsWidget()
+                self.settings_widget = SettingsWidget(
+                    config_manager=self.config_manager,
+                    risk_manager=self.risk_manager,
+                    notification_manager=self.notification_manager,
+                )
                 
             self.content_layout.addWidget(self.settings_widget)
         except (ImportError, Exception) as e:

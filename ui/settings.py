@@ -873,14 +873,18 @@ class ExchangeDialog(QDialog):
 
 class NotificationConfigWidget(QWidget):
     """Widget konfiguracji powiadomień"""
-    
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None, config_manager=None, notification_manager=None):
         super().__init__(parent)
-        
+
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, NotificationConfigWidget will not function properly")
             return
-            
+
+        self.config_manager = config_manager or get_config_manager()
+        self.notification_manager = notification_manager
+        self._loading = False
+
         try:
             self.setup_ui()
             self.load_settings()
@@ -1005,9 +1009,42 @@ class NotificationConfigWidget(QWidget):
     
     def load_settings(self):
         """Ładuje ustawienia powiadomień"""
-        # Przykładowe ustawienia
-        self.email_edit.setText("user@example.com")
-    
+        if not self.config_manager:
+            return
+
+        try:
+            self._loading = True
+            settings = self.config_manager.get_notification_settings()
+
+            self.enable_notifications.setChecked(bool(settings.get('enabled', True)))
+            self.enable_sound.setChecked(bool(settings.get('sound', True)))
+            self.enable_desktop.setChecked(bool(settings.get('desktop', True)))
+
+            types_cfg = settings.get('types', {})
+            self.trade_notifications.setChecked(bool(types_cfg.get('trades', True)))
+            self.profit_notifications.setChecked(bool(types_cfg.get('profit', True)))
+            self.error_notifications.setChecked(bool(types_cfg.get('errors', True)))
+            self.api_notifications.setChecked(bool(types_cfg.get('api', False)))
+
+            channels_cfg = settings.get('channels', {})
+            email_cfg = channels_cfg.get('email', {})
+            self.email_checkbox.setChecked(bool(email_cfg.get('enabled', False)))
+            self.email_edit.setText(email_cfg.get('address', ''))
+
+            telegram_cfg = channels_cfg.get('telegram', {})
+            self.telegram_checkbox.setChecked(bool(telegram_cfg.get('enabled', False)))
+            token = telegram_cfg.get('token', '')
+            chat_id = telegram_cfg.get('chat_id', '')
+            self.telegram_edit.setText(token or chat_id)
+
+            discord_cfg = channels_cfg.get('discord', {})
+            self.discord_checkbox.setChecked(bool(discord_cfg.get('enabled', False)))
+            self.discord_edit.setText(discord_cfg.get('webhook', ''))
+        except Exception as exc:
+            print(f"Error loading notification settings: {exc}")
+        finally:
+            self._loading = False
+
     def save_settings(self):
         """Zapisuje ustawienia powiadomień"""
         settings = {
@@ -1035,12 +1072,19 @@ class NotificationConfigWidget(QWidget):
                 }
             }
         }
-        
+
+        if self.config_manager:
+            try:
+                self.config_manager.update_notification_settings(settings)
+            except Exception as exc:
+                QMessageBox.warning(self, "Błąd", f"Nie udało się zapisać ustawień powiadomień: {exc}")
+                return
+
         QMessageBox.information(self, "Zapisano", "Ustawienia powiadomień zostały zapisane.")
-    
+
     def configure_channel(self, channel_name: str):
         """Konfiguruje kanał powiadomień"""
-        QMessageBox.information(self, "Konfiguracja", 
+        QMessageBox.information(self, "Konfiguracja",
                               f"Szczegółowa konfiguracja kanału {channel_name} będzie dostępna wkrótce.")
     
     def test_notifications(self):
@@ -1051,176 +1095,176 @@ class NotificationConfigWidget(QWidget):
 
 class RiskManagementWidget(QWidget):
     """Widget zarządzania ryzykiem"""
-    
-    def __init__(self, parent=None):
+
+    DEFAULT_SETTINGS = {
+        'max_position_size': 10.0,
+        'max_daily_trades': 50,
+        'max_open_positions': 10,
+        'default_stop_loss': 2.0,
+        'default_take_profit': 5.0,
+        'trailing_stop_enabled': False,
+        'max_daily_loss': 5.0,
+        'max_drawdown': 10.0,
+        'emergency_stop_enabled': True,
+        'risk_per_trade': 1.0,
+        'kelly_criterion_enabled': False,
+        'compound_profits': True,
+    }
+
+    def __init__(self, parent=None, config_manager=None, risk_manager=None):
         super().__init__(parent)
-        
+
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, RiskManagementWidget will not function properly")
             return
-            
+
         self.logger = get_logger("RiskManagementWidget")
-        self.config_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
-                                       'config', 'risk_settings.json')
-        
-        # Import RiskManager if available
-        self.risk_manager = None
+        self.config_manager = config_manager or get_config_manager()
+        self.risk_manager = risk_manager
+        self.RiskLimits = None
+
         try:
-            from app.risk_management import RiskManager, RiskLimits
-            from core.database_manager import DatabaseManager
-            
-            # Initialize database manager and risk manager
-            db_manager = DatabaseManager()
-            self.risk_manager = RiskManager(db_manager)
-            self.RiskLimits = RiskLimits
-            
+            if self.risk_manager is None:
+                from app.risk_management import RiskManager, RiskLimits
+                from core.database_manager import DatabaseManager
+
+                db_manager = DatabaseManager()
+                self.risk_manager = RiskManager(db_manager)
+                self.RiskLimits = RiskLimits
+            else:
+                from app.risk_management import RiskLimits
+                self.RiskLimits = RiskLimits
         except ImportError as e:
             self.logger.warning(f"RiskManager not available: {e}")
-            
+
         try:
             self.setup_ui()
             self.load_settings()
         except Exception as e:
             print(f"Error setting up RiskManagement UI: {e}")
-    
+
     def setup_ui(self):
         """Konfiguracja interfejsu"""
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
-        
-        # Nagłówek
+
         title = QLabel("Zarządzanie Ryzykiem")
         title.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
-        
-        # Limity pozycji
+
         position_group = QGroupBox("Limity Pozycji")
         position_layout = QFormLayout(position_group)
-        
+
         self.max_position_size = QDoubleSpinBox()
         self.max_position_size.setRange(0.01, 100.0)
-        self.max_position_size.setValue(10.0)
+        self.max_position_size.setValue(self.DEFAULT_SETTINGS['max_position_size'])
         self.max_position_size.setSuffix(" %")
         position_layout.addRow("Maksymalny rozmiar pozycji:", self.max_position_size)
-        
+
         self.max_daily_trades = QSpinBox()
         self.max_daily_trades.setRange(1, 1000)
-        self.max_daily_trades.setValue(50)
+        self.max_daily_trades.setValue(self.DEFAULT_SETTINGS['max_daily_trades'])
         position_layout.addRow("Maksymalna liczba transakcji dziennie:", self.max_daily_trades)
-        
+
         self.max_open_positions = QSpinBox()
         self.max_open_positions.setRange(1, 100)
-        self.max_open_positions.setValue(10)
+        self.max_open_positions.setValue(self.DEFAULT_SETTINGS['max_open_positions'])
         position_layout.addRow("Maksymalna liczba otwartych pozycji:", self.max_open_positions)
-        
+
         layout.addWidget(position_group)
-        
-        # Stop Loss i Take Profit
+
         sl_tp_group = QGroupBox("Stop Loss i Take Profit")
         sl_tp_layout = QFormLayout(sl_tp_group)
-        
+
         self.default_stop_loss = QDoubleSpinBox()
         self.default_stop_loss.setRange(0.1, 50.0)
-        self.default_stop_loss.setValue(2.0)
+        self.default_stop_loss.setValue(self.DEFAULT_SETTINGS['default_stop_loss'])
         self.default_stop_loss.setSuffix(" %")
         sl_tp_layout.addRow("Domyślny Stop Loss:", self.default_stop_loss)
-        
+
         self.default_take_profit = QDoubleSpinBox()
         self.default_take_profit.setRange(0.1, 100.0)
-        self.default_take_profit.setValue(5.0)
+        self.default_take_profit.setValue(self.DEFAULT_SETTINGS['default_take_profit'])
         self.default_take_profit.setSuffix(" %")
         sl_tp_layout.addRow("Domyślny Take Profit:", self.default_take_profit)
-        
+
         self.trailing_stop = QCheckBox("Włącz Trailing Stop")
         sl_tp_layout.addRow("", self.trailing_stop)
-        
+
         layout.addWidget(sl_tp_group)
-        
-        # Limity strat
+
         loss_group = QGroupBox("Limity Strat")
         loss_layout = QFormLayout(loss_group)
-        
+
         self.max_daily_loss = QDoubleSpinBox()
         self.max_daily_loss.setRange(0.1, 50.0)
-        self.max_daily_loss.setValue(5.0)
+        self.max_daily_loss.setValue(self.DEFAULT_SETTINGS['max_daily_loss'])
         self.max_daily_loss.setSuffix(" %")
         loss_layout.addRow("Maksymalna dzienna strata:", self.max_daily_loss)
-        
+
         self.max_drawdown = QDoubleSpinBox()
         self.max_drawdown.setRange(0.1, 50.0)
-        self.max_drawdown.setValue(10.0)
+        self.max_drawdown.setValue(self.DEFAULT_SETTINGS['max_drawdown'])
         self.max_drawdown.setSuffix(" %")
         loss_layout.addRow("Maksymalny drawdown:", self.max_drawdown)
-        
+
         self.emergency_stop = QCheckBox("Awaryjne zatrzymanie przy przekroczeniu limitów")
-        self.emergency_stop.setChecked(True)
+        self.emergency_stop.setChecked(self.DEFAULT_SETTINGS['emergency_stop_enabled'])
         loss_layout.addRow("", self.emergency_stop)
-        
+
         layout.addWidget(loss_group)
-        
-        # Zarządzanie kapitałem
+
         capital_group = QGroupBox("Zarządzanie Kapitałem")
         capital_layout = QFormLayout(capital_group)
-        
+
         self.risk_per_trade = QDoubleSpinBox()
         self.risk_per_trade.setRange(0.1, 10.0)
-        self.risk_per_trade.setValue(1.0)
+        self.risk_per_trade.setValue(self.DEFAULT_SETTINGS['risk_per_trade'])
         self.risk_per_trade.setSuffix(" %")
         capital_layout.addRow("Ryzyko na transakcję:", self.risk_per_trade)
-        
+
         self.kelly_criterion = QCheckBox("Użyj kryterium Kelly'ego")
         capital_layout.addRow("", self.kelly_criterion)
-        
+
         self.compound_profits = QCheckBox("Kapitalizuj zyski")
-        self.compound_profits.setChecked(True)
+        self.compound_profits.setChecked(self.DEFAULT_SETTINGS['compound_profits'])
         capital_layout.addRow("", self.compound_profits)
-        
+
         layout.addWidget(capital_group)
-        
-        # Przyciski
+
         buttons_layout = QHBoxLayout()
-        
         reset_btn = QPushButton("Resetuj do Domyślnych")
         reset_btn.clicked.connect(self.reset_to_defaults)
         buttons_layout.addWidget(reset_btn)
-        
         buttons_layout.addStretch()
-        
         save_btn = QPushButton("Zapisz")
         save_btn.clicked.connect(self.save_settings)
         buttons_layout.addWidget(save_btn)
-        
         layout.addLayout(buttons_layout)
-    
+
     def load_settings(self):
         """Ładuje ustawienia zarządzania ryzykiem"""
         try:
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    settings = json.load(f)
-                
-                # Załaduj ustawienia do UI
-                self.max_position_size.setValue(settings.get('max_position_size', 10.0))
-                self.max_daily_trades.setValue(settings.get('max_daily_trades', 50))
-                self.max_open_positions.setValue(settings.get('max_open_positions', 10))
-                self.default_stop_loss.setValue(settings.get('default_stop_loss', 2.0))
-                self.default_take_profit.setValue(settings.get('default_take_profit', 5.0))
-                self.trailing_stop.setChecked(settings.get('trailing_stop_enabled', False))
-                self.max_daily_loss.setValue(settings.get('max_daily_loss', 5.0))
-                self.max_drawdown.setValue(settings.get('max_drawdown', 10.0))
-                self.emergency_stop.setChecked(settings.get('emergency_stop_enabled', True))
-                self.risk_per_trade.setValue(settings.get('risk_per_trade', 1.0))
-                self.kelly_criterion.setChecked(settings.get('kelly_criterion_enabled', False))
-                self.compound_profits.setChecked(settings.get('compound_profits', True))
-                
-                self.logger.info("Załadowano ustawienia zarządzania ryzykiem z pliku konfiguracyjnego")
-            else:
-                self.logger.info("Plik konfiguracyjny nie istnieje, używam domyślnych ustawień")
-                
+            settings = self.config_manager.get_risk_settings() if self.config_manager else dict(self.DEFAULT_SETTINGS)
+
+            self.max_position_size.setValue(settings.get('max_position_size', self.DEFAULT_SETTINGS['max_position_size']))
+            self.max_daily_trades.setValue(int(settings.get('max_daily_trades', self.DEFAULT_SETTINGS['max_daily_trades'])))
+            self.max_open_positions.setValue(int(settings.get('max_open_positions', self.DEFAULT_SETTINGS['max_open_positions'])))
+            self.default_stop_loss.setValue(settings.get('default_stop_loss', self.DEFAULT_SETTINGS['default_stop_loss']))
+            self.default_take_profit.setValue(settings.get('default_take_profit', self.DEFAULT_SETTINGS['default_take_profit']))
+            self.trailing_stop.setChecked(bool(settings.get('trailing_stop_enabled', self.DEFAULT_SETTINGS['trailing_stop_enabled'])))
+            self.max_daily_loss.setValue(settings.get('max_daily_loss', self.DEFAULT_SETTINGS['max_daily_loss']))
+            self.max_drawdown.setValue(settings.get('max_drawdown', self.DEFAULT_SETTINGS['max_drawdown']))
+            self.emergency_stop.setChecked(bool(settings.get('emergency_stop_enabled', self.DEFAULT_SETTINGS['emergency_stop_enabled'])))
+            self.risk_per_trade.setValue(settings.get('risk_per_trade', self.DEFAULT_SETTINGS['risk_per_trade']))
+            self.kelly_criterion.setChecked(bool(settings.get('kelly_criterion_enabled', self.DEFAULT_SETTINGS['kelly_criterion_enabled'])))
+            self.compound_profits.setChecked(bool(settings.get('compound_profits', self.DEFAULT_SETTINGS['compound_profits'])))
+
+            self.logger.info("Załadowano ustawienia zarządzania ryzykiem")
         except Exception as e:
             self.logger.error(f"Błąd podczas ładowania ustawień: {e}")
             QMessageBox.warning(self, "Błąd", f"Nie udało się załadować ustawień: {e}")
-    
+
     def save_settings(self):
         """Zapisuje ustawienia zarządzania ryzykiem"""
         try:
@@ -1231,7 +1275,7 @@ class RiskManagementWidget(QWidget):
                 'default_stop_loss': self.default_stop_loss.value(),
                 'default_take_profit': self.default_take_profit.value(),
                 'trailing_stop_enabled': self.trailing_stop.isChecked(),
-                'trailing_stop_distance': 1.0,  # Domyślna wartość
+                'trailing_stop_distance': 1.0,
                 'max_daily_loss': self.max_daily_loss.value(),
                 'max_drawdown': self.max_drawdown.value(),
                 'emergency_stop_enabled': self.emergency_stop.isChecked(),
@@ -1239,23 +1283,11 @@ class RiskManagementWidget(QWidget):
                 'kelly_criterion_enabled': self.kelly_criterion.isChecked(),
                 'compound_profits': self.compound_profits.isChecked()
             }
-            
-            # Użyj ConfigManager do zapisania ustawień
-            config_manager = get_config_manager()
-            
-            # Pobierz aktualną konfigurację app
-            current_config = config_manager.get_app_config()
-            
-            # Aktualizuj sekcję risk_management
-            if 'risk_management' not in current_config:
-                current_config['risk_management'] = {}
-            current_config['risk_management'].update(settings)
-            
-            # Zapisz przez ConfigManager (to wyśle event CONFIG_UPDATED)
-            config_manager.save_config('app', current_config)
-            
-            # Aktualizuj RiskManager jeśli dostępny
-            if self.risk_manager and hasattr(self, 'RiskLimits'):
+
+            if self.config_manager:
+                self.config_manager.update_risk_settings(settings)
+
+            if self.risk_manager and self.RiskLimits:
                 try:
                     import asyncio
                     try:
@@ -1266,86 +1298,107 @@ class RiskManagementWidget(QWidget):
                             future.result(timeout=5)
                     except RuntimeError:
                         asyncio.run(self.apply_settings_to_bots(settings))
-                    
+
                     self.logger.info("Ustawienia zarządzania ryzykiem zostały zaktualizowane w RiskManager")
-                    
+
                 except Exception as e:
                     self.logger.error(f"Błąd podczas aktualizacji RiskManager: {e}")
-            
+
             self.logger.info("Zapisano ustawienia zarządzania ryzykiem")
             QMessageBox.information(self, "Zapisano", "Ustawienia zarządzania ryzykiem zostały zapisane.")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd podczas zapisywania ustawień: {e}")
             QMessageBox.warning(self, "Błąd", f"Nie udało się zapisać ustawień: {e}")
-    
+
     def reset_to_defaults(self):
         """Resetuje ustawienia do domyślnych"""
         reply = QMessageBox.question(self, "Reset Ustawień",
                                    "Czy na pewno chcesz zresetować wszystkie ustawienia do domyślnych?",
                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
+
         if reply == QMessageBox.StandardButton.Yes:
-            # Resetuj do domyślnych wartości
-            self.max_position_size.setValue(10.0)
-            self.max_daily_trades.setValue(50)
-            self.max_open_positions.setValue(10)
-            self.default_stop_loss.setValue(2.0)
-            self.default_take_profit.setValue(5.0)
-            self.trailing_stop.setChecked(False)
-            self.max_daily_loss.setValue(5.0)
-            self.max_drawdown.setValue(10.0)
-            self.emergency_stop.setChecked(True)
-            self.risk_per_trade.setValue(1.0)
-            self.kelly_criterion.setChecked(False)
-            self.compound_profits.setChecked(True)
-    
+            defaults = dict(self.DEFAULT_SETTINGS)
+            self.max_position_size.setValue(defaults['max_position_size'])
+            self.max_daily_trades.setValue(defaults['max_daily_trades'])
+            self.max_open_positions.setValue(defaults['max_open_positions'])
+            self.default_stop_loss.setValue(defaults['default_stop_loss'])
+            self.default_take_profit.setValue(defaults['default_take_profit'])
+            self.trailing_stop.setChecked(defaults['trailing_stop_enabled'])
+            self.max_daily_loss.setValue(defaults['max_daily_loss'])
+            self.max_drawdown.setValue(defaults['max_drawdown'])
+            self.emergency_stop.setChecked(defaults['emergency_stop_enabled'])
+            self.risk_per_trade.setValue(defaults['risk_per_trade'])
+            self.kelly_criterion.setChecked(defaults['kelly_criterion_enabled'])
+            self.compound_profits.setChecked(defaults['compound_profits'])
+
+            if self.config_manager:
+                try:
+                    self.config_manager.update_risk_settings(defaults)
+                except Exception as exc:
+                    self.logger.error(f"Nie udało się zapisać domyślnych ustawień: {exc}")
+
     async def apply_settings_to_bots(self, settings):
         """Stosuje ustawienia zarządzania ryzykiem do wszystkich aktywnych botów"""
         try:
-            if not self.risk_manager:
+            if not self.risk_manager or not self.RiskLimits:
                 return
-                
-            # Pobierz listę aktywnych botów
+
             from core.database_manager import DatabaseManager
             db_manager = DatabaseManager()
             await db_manager.initialize()
-            
+
             active_bots = await db_manager.get_active_bots()
-            
-            # Utwórz obiekt RiskLimits
+
             risk_limits = self.RiskLimits(
                 daily_loss_limit=settings['max_daily_loss'],
-                daily_profit_limit=0.0,  # Można dodać do UI w przyszłości
+                daily_profit_limit=0.0,
                 max_drawdown_limit=settings['max_drawdown'],
                 position_size_limit=settings['max_position_size'],
                 max_open_positions=settings['max_open_positions'],
-                max_correlation=0.8,  # Domyślna wartość
-                volatility_threshold=10.0,  # Domyślna wartość
-                var_limit=0.0  # Domyślna wartość
+                max_correlation=0.8,
+                volatility_threshold=10.0,
+                var_limit=0.0
             )
-            
-            # Zastosuj limity do wszystkich aktywnych botów
+
             for bot in active_bots:
                 await self.risk_manager.update_risk_limits(bot['id'], risk_limits)
                 self.logger.info(f"Zaktualizowano limity ryzyka dla bota {bot['id']}")
-            
+
             self.logger.info(f"Zastosowano ustawienia zarządzania ryzykiem do {len(active_bots)} botów")
-            
+
         except Exception as e:
             self.logger.error(f"Błąd podczas stosowania ustawień do botów: {e}")
 
 
 class GeneralSettingsWidget(QWidget):
     """Widget ogólnych ustawień aplikacji"""
-    
-    def __init__(self, parent=None):
+
+    THEME_LABELS = {
+        "dark": "Ciemny",
+        "light": "Jasny",
+        "auto": "Automatyczny",
+    }
+
+    LANGUAGE_LABELS = {
+        "pl": "Polski",
+        "en": "English",
+        "es": "Español",
+        "fr": "Français",
+    }
+
+    def __init__(self, parent=None, config_manager=None):
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, GeneralSettingsWidget will not function properly")
             return
-            
+
         try:
             super().__init__(parent)
+            self.config_manager = config_manager or get_config_manager()
+            self._theme_reverse = {v: k for k, v in self.THEME_LABELS.items()}
+            self._language_reverse = {v: k for k, v in self.LANGUAGE_LABELS.items()}
+            self._loading = False
+
             self.setup_ui()
             self.load_settings()
         except Exception as e:
@@ -1459,24 +1512,55 @@ class GeneralSettingsWidget(QWidget):
         layout.addLayout(buttons_layout)
     
     def load_settings(self):
-        """Ładuje ogólne ustawienia"""
-        # Przykładowe ustawienia
-        self.theme_combo.setCurrentText("Ciemny")
-        self.language_combo.setCurrentText("Polski")
-    
+        """Ładuje ogólne ustawienia z ConfigManager."""
+        if not hasattr(self, "config_manager") or self.config_manager is None:
+            return
+
+        try:
+            self._loading = True
+            settings = self.config_manager.get_general_settings()
+
+            ui_settings = settings.get("ui", {})
+            startup_settings = settings.get("startup", {})
+            security_settings = settings.get("security", {})
+            updates_settings = settings.get("updates", {})
+
+            theme_key = ui_settings.get("theme", "dark").lower()
+            self.theme_combo.setCurrentText(self.THEME_LABELS.get(theme_key, "Ciemny"))
+            language_key = ui_settings.get("language", "pl").lower()
+            self.language_combo.setCurrentText(self.LANGUAGE_LABELS.get(language_key, "Polski"))
+            self.minimize_to_tray.setChecked(bool(ui_settings.get("minimize_to_tray", True)))
+            self.start_minimized.setChecked(bool(ui_settings.get("start_minimized", False)))
+
+            self.autostart.setChecked(bool(startup_settings.get("start_with_system", False)))
+            self.auto_start_bots.setChecked(bool(startup_settings.get("auto_start_bots", False)))
+            self.auto_connect_exchanges.setChecked(bool(startup_settings.get("auto_connect_exchanges", True)))
+
+            self.encrypt_config.setChecked(bool(security_settings.get("encrypt_config", True)))
+            self.require_password.setChecked(bool(security_settings.get("require_password", True)))
+            self.auto_logout.setChecked(bool(security_settings.get("auto_logout", True)))
+            self.logout_timeout.setValue(int(security_settings.get("logout_timeout", 30)))
+
+            self.auto_check_updates.setChecked(bool(updates_settings.get("auto_check", True)))
+            self.beta_updates.setChecked(bool(updates_settings.get("beta_updates", False)))
+        except Exception as exc:
+            print(f"Error loading general settings: {exc}")
+        finally:
+            self._loading = False
+
     def save_settings(self):
         """Zapisuje ogólne ustawienia"""
-        settings = {
+        payload = {
             'ui': {
-                'theme': self.theme_combo.currentText(),
-                'language': self.language_combo.currentText(),
+                'theme': self._theme_reverse.get(self.theme_combo.currentText(), 'dark'),
+                'language': self._language_reverse.get(self.language_combo.currentText(), 'pl'),
                 'minimize_to_tray': self.minimize_to_tray.isChecked(),
                 'start_minimized': self.start_minimized.isChecked()
             },
             'startup': {
-                'autostart': self.autostart.isChecked(),
-                'auto_connect_exchanges': self.auto_connect_exchanges.isChecked(),
-                'auto_start_bots': self.auto_start_bots.isChecked()
+                'start_with_system': self.autostart.isChecked(),
+                'auto_start_bots': self.auto_start_bots.isChecked(),
+                'auto_connect_exchanges': self.auto_connect_exchanges.isChecked()
             },
             'security': {
                 'encrypt_config': self.encrypt_config.isChecked(),
@@ -1489,7 +1573,14 @@ class GeneralSettingsWidget(QWidget):
                 'beta_updates': self.beta_updates.isChecked()
             }
         }
-        
+
+        if hasattr(self, "config_manager") and self.config_manager:
+            try:
+                self.config_manager.update_general_settings(payload)
+            except Exception as exc:
+                QMessageBox.warning(self, "Błąd", f"Nie udało się zapisać ustawień: {exc}")
+                return
+
         QMessageBox.information(self, "Zapisano", "Ogólne ustawienia zostały zapisane.")
     
     def check_updates(self):
@@ -1524,18 +1615,20 @@ class GeneralSettingsWidget(QWidget):
 
 class SettingsWidget(QWidget):
     """Główny widget ustawień"""
-    
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None, config_manager=None, risk_manager=None, notification_manager=None):
         if not PYQT_AVAILABLE:
             print("PyQt6 not available, SettingsWidget will not function properly")
-            # Gdy PyQt6 nie jest dostępne, utwórz podstawowy obiekt
             object.__init__(self)
             return
-            
+
         super().__init__(parent)
-            
+
         try:
             self.logger = get_logger(__name__)
+            self.config_manager = config_manager or get_config_manager()
+            self.risk_manager = risk_manager
+            self.notification_manager = notification_manager
             self.setup_ui()
         except Exception as e:
             print(f"Error initializing SettingsWidget: {e}")
@@ -1551,17 +1644,25 @@ class SettingsWidget(QWidget):
         # Zakładka giełd
         self.exchanges_widget = ExchangeConfigWidget()
         self.tabs.addTab(self.exchanges_widget, "🏦 Giełdy")
-        
+
         # Zakładka powiadomień
-        self.notifications_widget = NotificationConfigWidget()
+        self.notifications_widget = NotificationConfigWidget(
+            config_manager=self.config_manager,
+            notification_manager=self.notification_manager,
+        )
         self.tabs.addTab(self.notifications_widget, "🔔 Powiadomienia")
-        
+
         # Zakładka zarządzania ryzykiem
-        self.risk_widget = RiskManagementWidget()
+        self.risk_widget = RiskManagementWidget(
+            config_manager=self.config_manager,
+            risk_manager=self.risk_manager,
+        )
         self.tabs.addTab(self.risk_widget, "⚠️ Zarządzanie Ryzykiem")
-        
+
         # Zakładka ogólnych ustawień
-        self.general_widget = GeneralSettingsWidget()
+        self.general_widget = GeneralSettingsWidget(
+            config_manager=self.config_manager,
+        )
         self.tabs.addTab(self.general_widget, "⚙️ Ogólne")
         
         layout.addWidget(self.tabs)

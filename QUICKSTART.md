@@ -5,6 +5,8 @@
 ### 1. Sprawdź środowisko
 ```cmd
 powershell -ExecutionPolicy Bypass -File start.ps1 -CheckOnly
+# lub platformowo niezależnie
+python main.py check-deps
 ```
 
 ### 2. Zainstaluj zależności (jeśli potrzeba)
@@ -18,6 +20,10 @@ start.bat
 # lub
 python main.py
 ```
+
+> ℹ️ **Chcesz upewnić się, że wszystko działa jak u użytkownika?**
+> Uruchom `python tools/user_acceptance_test.py`, aby automatycznie przejść przez kontrolę zależności,
+> testy i start GUI (możesz dodać `--json-output raport.json`, by zachować wyniki).
 
 ## 🎯 Pierwsze kroki w aplikacji
 

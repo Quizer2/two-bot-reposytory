@@ -3,9 +3,19 @@
 ## Szybki start
 ```bash
 pip install -r requirements.txt prometheus_client PyQt6
-python app.py  # albo start głównego modułu aplikacji
+python main.py check-deps  # opcjonalna kontrola środowiska przed startem
+python main.py             # uruchomienie aplikacji z GUI
 # Prometheus exporter: http://localhost:8000/metrics
 ```
+
+Dodaj `--write-report`, aby zapisać wynik kontroli do pliku
+(`runtime_dependency_report.json` domyślnie lub ścieżka podana parametrem `--report-path`).
+
+### Test akceptacyjny użytkownika
+```bash
+python tools/user_acceptance_test.py  # pełna ścieżka: zależności, pytest, compileall, start GUI
+```
+Raport JSON z wynikami można zapisać flagą `--json-output` i dołączyć do pipeline'u CI/CD.
 
 ## Testy
 ```bash

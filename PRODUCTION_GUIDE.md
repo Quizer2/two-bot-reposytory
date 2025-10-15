@@ -38,7 +38,9 @@ Upewnij się, że wszystkie testy przechodzą pomyślnie.
 python tools/check_runtime_dependencies.py
 ```
 
-Skrypt zapisze raport `runtime_dependency_report.json` oraz wypisze brakujące moduły Python i biblioteki systemowe (np. `libGL`).
+Skrypt wypisze brakujące moduły Python i biblioteki systemowe (np. `libGL`).
+Jeżeli chcesz zachować wynik w pliku, dodaj flagę `--write-report`
+(`runtime_dependency_report.json` lub ścieżka wskazana opcją `--report-path`).
 Zainstaluj brakujące elementy **przed** wdrożeniem release candidate.
 
 **Nowość:** pełną checklistę produkcyjną uruchomisz jednym poleceniem:
@@ -48,6 +50,14 @@ python ops/release_checklist.py --output build/release_report.json
 ```
 
 Raport JSON zawiera wynik testów, smoke testy oraz kontrolę zależności – dołącz go do procesu release'owego lub audytu.
+
+**Pełna ścieżka z perspektywy użytkownika końcowego:**
+
+```bash
+python tools/user_acceptance_test.py --json-output build/user_acceptance.json
+```
+
+Polecenie uruchamia kontrolę zależności, testy jednostkowe, kompilację bytecode i headless start GUI. Raport JSON można dołączyć do dokumentacji wdrożenia.
 
 ### 4. Walidacja konfiguracji handlu i ryzyka
 ```bash
@@ -99,6 +109,8 @@ Skrypt zwraca status trybu handlu (paper/live), kompletność kluczy API, popraw
 ## 🚀 Włączanie trybu produkcyjnego {#włączanie}
 
 ### Metoda 1: Przez interfejs użytkownika
+
+> 💡 Zalecamy uruchomić `python main.py check-deps`, aby upewnić się, że środowisko produkcyjne ma komplet bibliotek.
 
 1. **Otwórz aplikację**:
    ```bash

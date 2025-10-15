@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import secrets
+from collections import deque
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -26,6 +27,20 @@ except Exception as exc:  # pragma: no cover - środowisko bez komponentów AI
     AITradingBot = None  # type: ignore[assignment]
     AI_COMPONENTS_AVAILABLE = False
 
+try:
+    from app.strategy.arbitrage import ArbitrageStrategy as AdvancedArbitrageStrategy
+    ARBITRAGE_COMPONENTS_AVAILABLE = True
+except Exception:  # pragma: no cover - środowisko zależne od środowiska testowego
+    AdvancedArbitrageStrategy = None  # type: ignore[assignment]
+    ARBITRAGE_COMPONENTS_AVAILABLE = False
+
+try:
+    from app.strategy.swing import SwingStrategy as AdvancedSwingStrategy
+    SWING_COMPONENTS_AVAILABLE = True
+except Exception:  # pragma: no cover - opcjonalna zależność
+    AdvancedSwingStrategy = None  # type: ignore[assignment]
+    SWING_COMPONENTS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 class BotStatus(Enum):
@@ -42,6 +57,11 @@ class BotType(Enum):
     SCALPING = "scalping"
     CUSTOM = "custom"
     AI = "ai"
+    ARBITRAGE = "arbitrage"
+    SWING = "swing"
+    MOMENTUM = "momentum"
+    MEAN_REVERSION = "mean_reversion"
+    BREAKOUT = "breakout"
 
 @dataclass
 class BotConfig:
@@ -223,10 +243,33 @@ class BaseBot:
         except Exception as e:
             self.logger.error(f"❌ FLOW: Błąd podczas składania zlecenia dla bota {self.bot_id}: {e}")
             return None
-    
+
     async def get_current_price(self) -> Optional[PriceData]:
         """Pobiera aktualną cenę"""
         return await self.data_manager.get_market_data_for_bot(self.bot_id, self.config.symbol)
+
+    def _register_manual_profit(self, response: Any, quantity: float, actual_profit: float) -> None:
+        """Koryguje statystyki po ręcznym wyliczeniu zysku/straty."""
+
+        if response is None:
+            return
+
+        status = getattr(response, "status", None)
+        status_value = getattr(status, "value", getattr(status, "name", "")) if status else ""
+        if str(status_value).lower() not in {"filled", "partially_filled"}:
+            return
+
+        try:
+            average_price = float(getattr(response, "average_price", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            average_price = 0.0
+
+        default_profit = quantity * average_price * 0.01
+        self.total_profit -= default_profit
+        self.total_profit += actual_profit
+
+        if actual_profit < 0 and self.successful_trades > 0:
+            self.successful_trades -= 1
 
 class DCAStrategy(BaseBot):
     """Strategia DCA (Dollar Cost Averaging)"""
@@ -391,6 +434,460 @@ class AIStrategy(BaseBot):
             await self._ensure_ai_started()
         await asyncio.sleep(1)
 
+
+class ArbitrageBotStrategy(BaseBot):
+    """Strategia arbitrażowa działająca równolegle na wielu giełdach."""
+
+    def __init__(self, bot_id: str, config: BotConfig, data_manager: IntegratedDataManager):
+        super().__init__(bot_id, config, data_manager)
+        params = dict(config.parameters or {})
+        exchanges = params.get('exchanges') or []
+        if isinstance(exchanges, str):
+            exchanges = [segment.strip() for segment in exchanges.split(',') if segment.strip()]
+        if not exchanges:
+            primary = params.get('primary_exchange') or params.get('exchange') or 'binance'
+            secondary = params.get('secondary_exchange') or 'coinbase'
+            exchanges = [primary]
+            if secondary and secondary != primary:
+                exchanges.append(secondary)
+        if len(exchanges) < 2:
+            exchanges.append('kraken')
+        self.exchanges: List[str] = exchanges
+        min_spread_value = params.get('min_spread_percentage') or params.get('min_spread') or 0.5
+        if isinstance(min_spread_value, (int, float)) and float(min_spread_value) < 1:
+            min_spread_value = float(min_spread_value) * 100
+        self.min_spread_pct = float(min_spread_value)
+
+        max_slippage_value = params.get('max_slippage_percentage') or 0.25
+        if isinstance(max_slippage_value, (int, float)) and float(max_slippage_value) < 1:
+            max_slippage_value = float(max_slippage_value) * 100
+        self.max_slippage_pct = float(max_slippage_value)
+        self.trade_amount = float(params.get('trade_amount') or params.get('amount') or 50.0)
+        self._price_offsets: Dict[str, float] = {}
+        self._tick = 0
+        self._last_opportunity: Optional[Dict[str, Any]] = None
+        self._advanced_strategy = None
+
+        if ARBITRAGE_COMPONENTS_AVAILABLE and AdvancedArbitrageStrategy:
+            try:
+                init_kwargs: Dict[str, Any] = {
+                    'symbol': config.symbol,
+                    'exchanges': list(self.exchanges),
+                }
+                for key in (
+                    'min_spread_percentage', 'max_spread_percentage', 'min_volume', 'max_position_size',
+                    'execution_timeout_seconds', 'price_update_interval_ms', 'opportunity_expiry_seconds',
+                    'min_confidence_score', 'max_slippage_percentage', 'enable_triangular',
+                    'balance_threshold_percentage', 'risk_per_trade_percentage', 'max_concurrent_trades',
+                ):
+                    if key in params:
+                        init_kwargs[key] = params[key]
+                self._advanced_strategy = AdvancedArbitrageStrategy(**init_kwargs)
+            except Exception as exc:  # pragma: no cover - zależy od środowiska
+                logger.warning(f"Failed to initialize advanced arbitrage strategy for {bot_id}: {exc}")
+                self._advanced_strategy = None
+
+    async def _execute_strategy_logic(self):
+        price_data = await self.get_current_price()
+        if not price_data or not price_data.price or price_data.price <= 0:
+            return
+
+        base_price = float(price_data.price)
+        simulated_quotes: Dict[str, float] = {}
+        noise_basis = max(self.min_spread_pct, 0.1) / 200.0
+        self._tick += 1
+
+        for idx, exchange in enumerate(self.exchanges):
+            offset = self._price_offsets.get(exchange)
+            if offset is None:
+                offset = (idx - (len(self.exchanges) / 2)) * noise_basis
+                self._price_offsets[exchange] = offset
+            direction = 1 if (self._tick + idx) % 2 == 0 else -1
+            simulated_price = base_price * (1 + direction * abs(offset))
+            simulated_quotes[exchange] = max(simulated_price, 0.01)
+
+        if len(simulated_quotes) < 2:
+            return
+
+        best_bid_exchange, best_bid = max(simulated_quotes.items(), key=lambda item: item[1])
+        best_ask_exchange, best_ask = min(simulated_quotes.items(), key=lambda item: item[1])
+        if best_ask <= 0:
+            return
+
+        spread_pct = ((best_bid - best_ask) / best_ask) * 100.0
+        self.logger.debug(
+            "Arbitrage check %s: best bid %.4f @ %s vs ask %.4f @ %s (spread %.4f%%)",
+            self.bot_id,
+            best_bid,
+            best_bid_exchange,
+            best_ask,
+            best_ask_exchange,
+            spread_pct,
+        )
+
+        if spread_pct >= self.min_spread_pct:
+            quantity = max(self.trade_amount / base_price, 0.0)
+            profit = quantity * (best_bid - best_ask)
+            self.trades_count += 1
+            if profit >= 0:
+                self.successful_trades += 1
+            self.total_profit += profit
+            self.last_trade_time = datetime.now()
+            self._last_opportunity = {
+                'buy_exchange': best_ask_exchange,
+                'sell_exchange': best_bid_exchange,
+                'spread_pct': spread_pct,
+                'profit_estimate': profit,
+            }
+            self.logger.info(
+                "✅ FLOW: Wykryto okazję arbitrażową %.2f%% między %s a %s (zysk %.4f)",
+                spread_pct,
+                best_ask_exchange,
+                best_bid_exchange,
+                profit,
+            )
+        await asyncio.sleep(0)
+
+
+class SwingBotStrategy(BaseBot):
+    """Strategia swing trading wykorzystująca prostą analizę trendu."""
+
+    def __init__(self, bot_id: str, config: BotConfig, data_manager: IntegratedDataManager):
+        super().__init__(bot_id, config, data_manager)
+        params = dict(config.parameters or {})
+        self.trade_amount = float(params.get('amount') or params.get('position_size') or 250.0)
+        self.short_window = max(int(params.get('short_window', 5)), 2)
+        self.long_window = max(int(params.get('long_window', 20)), self.short_window + 1)
+        self.trend_buffer = float(params.get('trend_buffer', 0.001))
+        self.take_profit_ratio = float(params.get('take_profit_ratio', 2.0))
+        stop_loss_value = params.get('stop_loss_percentage', 1.5)
+        if isinstance(stop_loss_value, (int, float)) and float(stop_loss_value) < 1:
+            stop_loss_value = float(stop_loss_value) * 100
+        self.stop_loss_pct = float(stop_loss_value)
+        self._price_history: deque = deque(maxlen=max(self.long_window * 4, 50))
+        self._current_position: Optional[str] = None
+        self._entry_price: Optional[float] = None
+        self._advanced_strategy = None
+
+        if SWING_COMPONENTS_AVAILABLE and AdvancedSwingStrategy:
+            try:
+                init_kwargs: Dict[str, Any] = {'symbol': config.symbol}
+                for key in (
+                    'timeframe', 'amount', 'sma_short', 'sma_medium', 'sma_long', 'rsi_period', 'rsi_oversold',
+                    'rsi_overbought', 'macd_fast', 'macd_slow', 'macd_signal', 'bb_period', 'bb_std',
+                    'stoch_k', 'stoch_d', 'atr_period', 'min_trend_strength', 'stop_loss_atr_multiplier',
+                    'take_profit_ratio', 'stop_loss_percentage', 'max_position_time_hours', 'volume_confirmation',
+                ):
+                    if key in params:
+                        init_kwargs[key] = params[key]
+                self._advanced_strategy = AdvancedSwingStrategy(**init_kwargs)
+            except Exception as exc:  # pragma: no cover - zależy od środowiska
+                logger.warning(f"Failed to initialize advanced swing strategy for {bot_id}: {exc}")
+                self._advanced_strategy = None
+
+    async def _execute_strategy_logic(self):
+        price_data = await self.get_current_price()
+        if not price_data or not price_data.price or price_data.price <= 0:
+            return
+
+        price = float(price_data.price)
+        self._price_history.append(price)
+        if len(self._price_history) < self.long_window:
+            return
+
+        short_avg = sum(list(self._price_history)[-self.short_window:]) / self.short_window
+        long_avg = sum(self._price_history) / len(self._price_history)
+        threshold = long_avg * self.trend_buffer
+
+        if short_avg > long_avg + threshold:
+            await self._ensure_position('long', price)
+        elif short_avg < long_avg - threshold:
+            await self._ensure_position('short', price)
+
+        if self._current_position and self._entry_price:
+            change_pct = ((price - self._entry_price) / self._entry_price) * 100.0
+            if self._current_position == 'long' and change_pct >= self.take_profit_ratio:
+                await self._close_position(price)
+            elif self._current_position == 'long' and change_pct <= -self.stop_loss_pct:
+                await self._close_position(price)
+            elif self._current_position == 'short' and change_pct <= -self.take_profit_ratio:
+                await self._close_position(price)
+            elif self._current_position == 'short' and change_pct >= self.stop_loss_pct:
+                await self._close_position(price)
+
+        await asyncio.sleep(0)
+
+    async def _ensure_position(self, direction: str, price: float) -> None:
+        if self._current_position == direction:
+            return
+        if self._current_position and self._current_position != direction:
+            await self._close_position(price)
+        quantity = max(self.trade_amount / price, 0.0)
+        if quantity <= 0:
+            return
+        self._current_position = direction
+        self._entry_price = price
+        self.last_trade_time = datetime.now()
+        self.logger.info(
+            "📈 FLOW: %s otwiera pozycję %s @ %.2f (qty %.6f)",
+            self.bot_id,
+            direction,
+            price,
+            quantity,
+        )
+
+    async def _close_position(self, price: float) -> None:
+        if self._current_position is None or self._entry_price is None:
+            return
+        direction = self._current_position
+        entry_price = self._entry_price
+        quantity = max(self.trade_amount / entry_price, 0.0)
+        pnl = (price - entry_price) * quantity
+        if direction == 'short':
+            pnl = -pnl
+
+        self.trades_count += 1
+        if pnl > 0:
+            self.successful_trades += 1
+        self.total_profit += pnl
+        self.last_trade_time = datetime.now()
+
+        self.logger.info(
+            "📉 FLOW: %s zamyka pozycję %s @ %.2f (wejście %.2f, PnL %.4f)",
+            self.bot_id,
+            direction,
+            price,
+            entry_price,
+            pnl,
+        )
+
+        self._current_position = None
+        self._entry_price = None
+
+
+class MomentumBotStrategy(BaseBot):
+    """Strategia momentum wykorzystująca relację średnich kroczących."""
+
+    def __init__(self, bot_id: str, config: BotConfig, data_manager: IntegratedDataManager):
+        super().__init__(bot_id, config, data_manager)
+        params = dict(config.parameters or {})
+        self.short_window = max(int(params.get('short_window', 8)), 2)
+        self.long_window = max(int(params.get('long_window', 21)), self.short_window + 1)
+        threshold = float(params.get('momentum_threshold', 0.25))
+        if threshold > 1:
+            threshold = threshold / 100.0
+        self.momentum_threshold = max(threshold, 0.0005)
+        self.trade_amount = float(params.get('trade_amount', 250.0))
+        self.cooldown_seconds = max(float(params.get('cooldown_seconds', 60.0)), 0.0)
+        self._price_history: deque = deque(maxlen=max(self.long_window * 4, 120))
+        self._position_size = 0.0
+        self._entry_price: Optional[float] = None
+        self._last_trade_time: Optional[datetime] = None
+
+    async def _execute_strategy_logic(self):
+        price_data = await self.get_current_price()
+        if not price_data or not price_data.price or price_data.price <= 0:
+            return
+
+        price = float(price_data.price)
+        self._price_history.append(price)
+        if len(self._price_history) < self.long_window:
+            return
+
+        long_avg = sum(self._price_history) / len(self._price_history)
+        if long_avg <= 0:
+            return
+
+        short_avg = sum(list(self._price_history)[-self.short_window:]) / self.short_window
+        momentum = (short_avg - long_avg) / long_avg
+        now = datetime.now()
+
+        if self._last_trade_time and self.cooldown_seconds > 0:
+            if (now - self._last_trade_time).total_seconds() < self.cooldown_seconds:
+                return
+
+        if self._position_size <= 0 and momentum >= self.momentum_threshold:
+            quantity = max(self.trade_amount / price, 0.0)
+            if quantity <= 0:
+                return
+            response = await self._place_order(OrderSide.BUY, quantity, price)
+            if response:
+                self._position_size = quantity
+                self._entry_price = price
+                self._last_trade_time = now
+        elif self._position_size > 0 and momentum <= -self.momentum_threshold / 2:
+            quantity = self._position_size
+            response = await self._place_order(OrderSide.SELL, quantity, price)
+            if response:
+                actual_profit = (price - (self._entry_price or price)) * quantity
+                self._register_manual_profit(response, quantity, actual_profit)
+                self._position_size = 0.0
+                self._entry_price = None
+                self._last_trade_time = now
+
+        await asyncio.sleep(0)
+
+
+class MeanReversionBotStrategy(BaseBot):
+    """Strategia mean reversion reagująca na odchylenia od średniej."""
+
+    def __init__(self, bot_id: str, config: BotConfig, data_manager: IntegratedDataManager):
+        super().__init__(bot_id, config, data_manager)
+        params = dict(config.parameters or {})
+        window = int(params.get('lookback_window', 30))
+        self.lookback_window = max(window, 5)
+        deviation = float(params.get('deviation_threshold', 1.0))
+        if deviation > 1:
+            deviation = deviation / 100.0
+        self.deviation_threshold = max(deviation, 0.001)
+        self.trade_amount = float(params.get('trade_amount', 300.0))
+        self.max_position_minutes = max(int(params.get('max_position_minutes', 240)), 1)
+        self.position_scaling = bool(params.get('position_scaling', False))
+        self._price_history: deque = deque(maxlen=max(self.lookback_window * 4, 200))
+        self._position_size = 0.0
+        self._entry_price: Optional[float] = None
+        self._position_open_time: Optional[datetime] = None
+
+    async def _execute_strategy_logic(self):
+        price_data = await self.get_current_price()
+        if not price_data or not price_data.price or price_data.price <= 0:
+            return
+
+        price = float(price_data.price)
+        self._price_history.append(price)
+        if len(self._price_history) < self.lookback_window:
+            return
+
+        mean_price = sum(self._price_history) / len(self._price_history)
+        if mean_price <= 0:
+            return
+
+        deviation = (price - mean_price) / mean_price
+        now = datetime.now()
+
+        if self._position_size <= 0 and deviation <= -self.deviation_threshold:
+            quantity = max(self.trade_amount / price, 0.0)
+            if quantity <= 0:
+                return
+            response = await self._place_order(OrderSide.BUY, quantity, price)
+            if response:
+                self._position_size = quantity
+                self._entry_price = price
+                self._position_open_time = now
+        elif self._position_size > 0:
+            if self.position_scaling and deviation <= -self.deviation_threshold * 1.5:
+                addition = max(self.trade_amount / price, 0.0)
+                if addition > 0:
+                    response = await self._place_order(OrderSide.BUY, addition, price)
+                    if response:
+                        total_quantity = self._position_size + addition
+                        if total_quantity > 0:
+                            weighted_entry = (self._position_size * (self._entry_price or price)) + (addition * price)
+                            self._entry_price = weighted_entry / total_quantity
+                        self._position_size = total_quantity
+                        self._position_open_time = now
+
+            should_close = deviation >= self.deviation_threshold
+            if not should_close and self._position_open_time:
+                elapsed = (now - self._position_open_time).total_seconds()
+                should_close = elapsed >= self.max_position_minutes * 60
+
+            if should_close:
+                await self._close_position(price)
+
+        await asyncio.sleep(0)
+
+    async def _close_position(self, price: float) -> None:
+        if self._position_size <= 0:
+            return
+        quantity = self._position_size
+        response = await self._place_order(OrderSide.SELL, quantity, price)
+        if response:
+            entry = self._entry_price or price
+            actual_profit = (price - entry) * quantity
+            self._register_manual_profit(response, quantity, actual_profit)
+        self._position_size = 0.0
+        self._entry_price = None
+        self._position_open_time = None
+
+
+class BreakoutBotStrategy(BaseBot):
+    """Strategia breakout wykorzystująca potwierdzenia wybicia i trailing stop."""
+
+    def __init__(self, bot_id: str, config: BotConfig, data_manager: IntegratedDataManager):
+        super().__init__(bot_id, config, data_manager)
+        params = dict(config.parameters or {})
+        window = int(params.get('lookback_window', 40))
+        self.lookback_window = max(window, 10)
+        buffer_value = float(params.get('breakout_buffer', 0.3))
+        if buffer_value > 1:
+            buffer_value = buffer_value / 100.0
+        self.breakout_buffer = max(buffer_value, 0.0005)
+        trailing_value = float(params.get('trailing_stop_percentage', 0.8))
+        if trailing_value > 1:
+            trailing_value = trailing_value / 100.0
+        self.trailing_stop = max(trailing_value, 0.0005)
+        self.trade_amount = float(params.get('trade_amount', 350.0))
+        self.confirmation_candles = max(int(params.get('confirmation_candles', 2)), 1)
+        self._price_history: deque = deque(maxlen=max(self.lookback_window * 3, 150))
+        self._position_size = 0.0
+        self._entry_price: Optional[float] = None
+        self._peak_price: Optional[float] = None
+        self._confirmation_counter = 0
+
+    async def _execute_strategy_logic(self):
+        price_data = await self.get_current_price()
+        if not price_data or not price_data.price or price_data.price <= 0:
+            return
+
+        price = float(price_data.price)
+        self._price_history.append(price)
+        if len(self._price_history) < self.lookback_window:
+            return
+
+        window = list(self._price_history)[-self.lookback_window:]
+        window_high = max(window)
+        window_low = min(window)
+        upper_trigger = window_high * (1 + self.breakout_buffer)
+        lower_trigger = window_low * (1 - self.breakout_buffer)
+
+        if self._position_size <= 0:
+            if price >= upper_trigger:
+                self._confirmation_counter += 1
+                if self._confirmation_counter >= self.confirmation_candles:
+                    quantity = max(self.trade_amount / price, 0.0)
+                    if quantity > 0:
+                        response = await self._place_order(OrderSide.BUY, quantity, price)
+                        if response:
+                            self._position_size = quantity
+                            self._entry_price = price
+                            self._peak_price = price
+                            self._confirmation_counter = 0
+            else:
+                self._confirmation_counter = 0
+        else:
+            if price > (self._peak_price or price):
+                self._peak_price = price
+
+            stop_price = (self._peak_price or price) * (1 - self.trailing_stop)
+            exit_due_stop = price <= stop_price
+            exit_due_failure = price <= lower_trigger
+
+            if exit_due_stop or exit_due_failure:
+                quantity = self._position_size
+                response = await self._place_order(OrderSide.SELL, quantity, price)
+                if response:
+                    entry_price = self._entry_price or price
+                    actual_profit = (price - entry_price) * quantity
+                    self._register_manual_profit(response, quantity, actual_profit)
+                self._position_size = 0.0
+                self._entry_price = None
+                self._peak_price = None
+                self._confirmation_counter = 0
+
+        await asyncio.sleep(0)
+
+
 class UpdatedBotManager:
     """Zaktualizowany Manager Botów z integracją z UnifiedDataManager"""
 
@@ -444,22 +941,42 @@ class UpdatedBotManager:
             BotType.SCALPING: "Scalping",
             BotType.CUSTOM: "Custom",
             BotType.AI: "AI",
+            BotType.ARBITRAGE: "Arbitrage",
+            BotType.SWING: "Swing",
+            BotType.MOMENTUM: "Momentum",
+            BotType.MEAN_REVERSION: "MeanReversion",
+            BotType.BREAKOUT: "Breakout",
         }
         self._bot_type_reverse_map = {value.lower(): key for key, value in self._bot_type_db_map.items()}
 
         # Subskrypcja na zmiany konfiguracji
         self.event_bus.subscribe(EventTypes.CONFIG_UPDATED, self._on_config_updated)
-        
+
         # Mapowanie typów strategii
         self.strategy_classes = {
             BotType.DCA: DCAStrategy,
             BotType.GRID: GridStrategy,
             BotType.SCALPING: ScalpingStrategy,
             BotType.AI: AIStrategy,
+            BotType.ARBITRAGE: ArbitrageBotStrategy,
+            BotType.SWING: SwingBotStrategy,
+            BotType.MOMENTUM: MomentumBotStrategy,
+            BotType.MEAN_REVERSION: MeanReversionBotStrategy,
+            BotType.BREAKOUT: BreakoutBotStrategy,
             BotType.CUSTOM: BaseBot  # Fallback
         }
-        
+
         logger.info("UpdatedBotManager initialized with UnifiedDataManager")
+
+    def set_notification_manager(self, notification_manager) -> None:
+        """Przypina NotificationManager do managera i aktywnych strategii."""
+        self.notification_manager = notification_manager
+        for strategy in self.active_bots.values():
+            if hasattr(strategy, 'set_notification_manager'):
+                try:
+                    strategy.set_notification_manager(notification_manager)
+                except Exception as exc:
+                    logger.warning(f"Failed to attach NotificationManager to bot {strategy.bot_id}: {exc}")
 
     def _extract_db_id(self, bot_id: str) -> Optional[int]:
         if not bot_id:
