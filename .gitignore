@@ -17,7 +17,9 @@ build/
 dist/
 *.egg-info/
 vendor/linux/*.so*
-runtime_dependency_report.json
+# Raporty generowane on-demand (wersjonujemy tylko statyczny wzorzec)
+# Plik runtime_dependency_report.json przechowuje kanoniczny wynik checkera,
+# dlatego nie ignorujemy go mimo, że może być odświeżany lokalnie.
 reports/user_acceptance_*.json
 
 # Databases & logs

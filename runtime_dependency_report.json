@@ -1,0 +1,35 @@
+{
+  "platform": "Linux-generic",
+  "python": "3.x",
+  "modules": {
+    "aiosqlite": {
+      "status": "ok"
+    },
+    "websockets": {
+      "status": "ok"
+    },
+    "PyQt6": {
+      "status": "stub"
+    }
+  },
+  "system_libraries": {
+    "libGL.so.1": {
+      "status": "bundled",
+      "resolved": "vendor/linux/libGL.so.1"
+    },
+    "libOpenGL.so.0": {
+      "status": "bundled",
+      "resolved": "vendor/linux/libOpenGL.so.0"
+    }
+  },
+  "software_backend": {
+    "status": "configured",
+    "exports": {
+      "QT_OPENGL": "software",
+      "QT_QUICK_BACKEND": "software",
+      "QT_XCB_FORCE_SOFTWARE_OPENGL": "1"
+    },
+    "path": "config/qt_software_backend.env"
+  },
+  "notes": "Uruchom tools/check_runtime_dependencies.py --write-report na docelowej maszynie, aby odświeżyć dane."
+}

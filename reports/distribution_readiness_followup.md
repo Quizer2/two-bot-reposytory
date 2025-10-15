@@ -38,8 +38,9 @@ Przed publikacją wersji należy dodatkowo wykonać:
 - Aktualizuj raport pełny tylko wtedy, gdy zmienia się zakres testów lub
   pojawiają się nowe ryzyka – unikniemy konfliktów przy scalaniu.
 - Artefakty pomocnicze (raporty JSON, stuby OpenGL) są pomijane przez
-  `.gitignore`; generuj je lokalnie poleceniem `python main.py check-deps
-  --write-report`.
+  `.gitignore`; wyjątkiem jest `runtime_dependency_report.json`, który
+  przechowuje kanoniczny przykład raportu. Aktualny stan środowiska możesz
+  zaktualizować lokalnie poleceniem `python main.py check-deps --write-report`.
 - Zachowuj jednolity punkt startowy `python main.py run`, aby zespół
   wsparcia mógł odtworzyć środowisko w minutę.
 
