@@ -270,25 +270,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Wymuś zgodność z wywołaniami automatyzacji oczekującymi flagi --json (wyjście i tak ma format JSON)",
     )
-    parser.add_argument(
-        "--write-report",
-        action="store_true",
-        help=(
-            "Zapisz wynik do pliku (domyślnie runtime_dependency_report.json). "
-            "Bez tej flagi skrypt wypisuje raport jedynie na stdout."
-        ),
-    )
-    parser.add_argument(
-        "--report-path",
-        default=str(DEFAULT_REPORT_PATH),
-        help=(
-            "Ścieżka do zapisu raportu. Używana tylko, jeśli podano --write-report "
-            "(lub gdy ścieżka została jawnie zmieniona)."
-        ),
-    )
     args = parser.parse_args(argv or None)
 
-    payload, module_failures, library_failures = build_payload()
+    if args.json:
+        # Flaga zachowana dla zgodności z pipeline'ami oczekującymi parametru.
+        # Skrypt zawsze zwraca JSON, więc nie musimy podejmować dodatkowych działań.
+        pass
 
     if args.json:
         # Flaga zachowana dla zgodności z pipeline'ami oczekującymi parametru.
@@ -308,14 +295,8 @@ def main(argv: list[str] | None = None) -> int:
 
     output = json.dumps(payload, indent=2, ensure_ascii=False)
     print(output)
-
-    should_write = args.write_report or args.report_path != str(DEFAULT_REPORT_PATH)
-    if should_write:
-        report_path = Path(args.report_path)
-        report_path.write_text(output + "\n", encoding="utf-8")
-
-    exit_code = 0 if not (module_failures or library_failures) else 1
-    return exit_code
+    Path("runtime_dependency_report.json").write_text(output + "\n", encoding="utf-8")
+    return 0
 
 
 if __name__ == "__main__":

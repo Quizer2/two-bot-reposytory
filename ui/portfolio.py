@@ -813,25 +813,6 @@ class PortfolioWidget(QWidget):
             if hasattr(self, 'logger') and self.logger:
                 self.logger.error(f"Failed to initialize PortfolioManager: {exc}")
 
-    def _ensure_trading_manager(self):
-        if hasattr(self, 'trading_manager') and self.trading_manager:
-            return
-
-        from app.trading_mode_manager import TradingModeManager
-
-        config = get_config_manager()
-        self.trading_manager = TradingModeManager(config)
-
-    def _set_trading_mode_combo(self, text: str):
-        if not hasattr(self, 'trading_mode_combo'):
-            return
-
-        try:
-            self.trading_mode_combo.blockSignals(True)
-            self.trading_mode_combo.setCurrentText(text)
-        finally:
-            self.trading_mode_combo.blockSignals(False)
-
     def setup_ui(self):
         """Konfiguracja interfejsu"""
         layout = QVBoxLayout(self)
@@ -1273,43 +1254,19 @@ class PortfolioWidget(QWidget):
 
         trading_mode = get_app_setting('trading.mode', 'paper')
 
-        zero_override = None
-        if trading_mode != 'paper':
-            try:
-                self._ensure_trading_manager()
-                if getattr(self, 'trading_manager', None) and not self.trading_manager.live_trading_available():
-                    zero_override = self._run_async_task(self.trading_manager.get_zeroed_live_view())
-            except Exception as exc:
-                if hasattr(self, 'logger') and self.logger:
-                    self.logger.debug(f"Live snapshot override failed: {exc}")
-
-        if zero_override:
-            summary = zero_override.get('summary')
-            balances = zero_override.get('balances', [])
-            transactions = zero_override.get('transactions', [])
-            trading_mode = 'live_disabled'
-
-        summary_payload = self._coerce_summary_payload(summary)
-
         self.portfolio_data = {
-            'total_value': summary_payload['total_value'],
-            'change_24h': summary_payload['daily_change'],
-            'change_24h_percent': summary_payload['daily_change_percent'],
-            'daily_pnl': summary_payload['daily_change'],
+            'total_value': summary.total_value,
+            'change_24h': summary.daily_change,
+            'change_24h_percent': summary.daily_change_percent,
+            'daily_pnl': summary.daily_change,
             'mode': trading_mode,
             'trades_count': len(transactions),
-            'initial_balance': summary_payload['invested_amount'],
-            'available_balance': summary_payload['available_balance'],
+            'initial_balance': summary.invested_amount,
+            'available_balance': summary.available_balance,
         }
 
         self.balance_data = balances
-        if isinstance(balances, list):
-            self.balances = {item.get('symbol', f"asset_{idx}"): item for idx, item in enumerate(balances)}
-        elif isinstance(balances, dict):
-            self.balances = balances
-        else:
-            self.balances = {}
-
+        self.balances = {item['symbol']: item for item in balances}
         self.transactions = transactions
 
         self.update_portfolio_summary()
@@ -1326,33 +1283,6 @@ class PortfolioWidget(QWidget):
 
         if hasattr(self, 'logger'):
             self.logger.info("Portfolio UI refreshed with latest data")
-
-    def _coerce_summary_payload(self, summary: Any) -> Dict[str, float]:
-        """Normalizuje strukturę podsumowania portfela do słownika z wartościami liczbowymi."""
-        payload = {
-            'total_value': 0.0,
-            'daily_change': 0.0,
-            'daily_change_percent': 0.0,
-            'available_balance': 0.0,
-            'invested_amount': 0.0,
-            'total_profit_loss': 0.0,
-            'total_profit_loss_percent': 0.0,
-        }
-
-        if summary is None:
-            return payload
-
-        try:
-            for key in list(payload.keys()):
-                if hasattr(summary, key):
-                    payload[key] = float(getattr(summary, key) or 0.0)
-                elif isinstance(summary, dict):
-                    payload[key] = float(summary.get(key, 0.0) or 0.0)
-        except Exception:
-            # Zignoruj nieprzewidziane formaty i wróć domyślne zera
-            pass
-
-        return payload
 
     def _load_portfolio_snapshot(self):
         if not self.portfolio_manager:

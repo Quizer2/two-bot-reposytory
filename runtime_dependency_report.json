@@ -15,21 +15,20 @@
   "system_libraries": {
     "libGL.so.1": {
       "status": "bundled",
-      "resolved": "vendor/linux/libGL.so.1"
+      "resolved": "/workspace/two-bot-reposytory/vendor/linux/libGL.so.1",
+      "note": "Stub zbudowany lokalnie"
     },
     "libOpenGL.so.0": {
       "status": "bundled",
-      "resolved": "vendor/linux/libOpenGL.so.0"
+      "resolved": "/workspace/two-bot-reposytory/vendor/linux/libOpenGL.so.0",
+      "note": "Stub zbudowany lokalnie"
     }
   },
   "software_backend": {
-    "status": "configured",
-    "exports": {
-      "QT_OPENGL": "software",
-      "QT_QUICK_BACKEND": "software",
-      "QT_XCB_FORCE_SOFTWARE_OPENGL": "1"
-    },
-    "path": "config/qt_software_backend.env"
+    "status": "not_required"
   },
-  "notes": "Uruchom tools/check_runtime_dependencies.py --write-report na docelowej maszynie, aby odświeżyć dane."
+  "notes": "Uruchom ten skrypt na maszynie docelowej. Jeśli zależności są brakujące, wykonaj sugerowane komendy instalacyjne przed wydaniem.",
+  "sentry": {
+    "status": "skipped"
+  }
 }

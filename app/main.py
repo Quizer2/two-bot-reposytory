@@ -28,37 +28,17 @@ os.environ.setdefault("QT_OPENGL", "software")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_XCB_FORCE_SOFTWARE_OPENGL", "1")
 
-# Import PyQt6 z warstwą kompatybilności
-from utils.qt_compat import load_qt_names
-
-_QT_IMPORTS = {
-    "QtWidgets": ["QApplication", "QMessageBox", "QSplashScreen"],
-    "QtCore": ["QTimer", "QThread", "pyqtSignal", "Qt"],
-    "QtGui": ["QPixmap", "QFont", "QPainter", "QLinearGradient", "QColor", "QBrush", "QPen"],
-}
-
-PYQT_AVAILABLE, _qt_objects = load_qt_names(_QT_IMPORTS)
-
-QApplication = _qt_objects["QApplication"]
-QMessageBox = _qt_objects["QMessageBox"]
-QSplashScreen = _qt_objects["QSplashScreen"]
-QTimer = _qt_objects["QTimer"]
-QThread = _qt_objects["QThread"]
-pyqtSignal = _qt_objects["pyqtSignal"]
-Qt = _qt_objects["Qt"]
-QPixmap = _qt_objects["QPixmap"]
-QFont = _qt_objects["QFont"]
-QPainter = _qt_objects["QPainter"]
-QLinearGradient = _qt_objects["QLinearGradient"]
-QColor = _qt_objects["QColor"]
-QBrush = _qt_objects["QBrush"]
-QPen = _qt_objects["QPen"]
-
-if not PYQT_AVAILABLE:
-    logger.warning(
-        "Uruchomiono aplikację bez natywnego PyQt6 – używane są stuby testowe. "
-        "Zainstaluj PyQt6 w środowisku docelowym, aby uruchomić pełny interfejs graficzny."
-    )
+# Import PyQt6
+try:
+    from PyQt6.QtWidgets import QApplication, QMessageBox, QSplashScreen
+    from PyQt6.QtCore import QTimer, QThread, pyqtSignal, Qt
+    from PyQt6.QtGui import QPixmap, QFont, QPainter, QLinearGradient, QColor, QBrush, QPen
+    PYQT_AVAILABLE = True
+except ImportError:
+    PYQT_AVAILABLE = False
+    # Nie używaj loggera zanim zostanie poprawnie skonfigurowany w niektórych środowiskach
+    print("PyQt6 is not available. Please install it to run the GUI.")
+    sys.exit(1)
 
 # Import lokalnych modułów
 from utils.config_manager import get_config_manager, get_app_setting
