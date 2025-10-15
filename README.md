@@ -42,3 +42,8 @@ docker compose up -d
 
 ## Backup/Export
 - UI: **Plik → Backup/Export…** (`Ctrl+E`)
+
+## Kontrybucja
+- Repozytorium udostępnia plik `.gitattributes`, który wymusza konwersję końcówek linii na `LF` dla plików źródłowych oraz oznacza artefakty binarne (np. `*.db`, `*.so`).
+- Na systemach Windows przed pierwszym commitem ustaw `git config core.autocrlf false`, aby uniknąć ponownej konwersji końcówek linii i konfliktów przy pushu.
+- Przed wysłaniem zmian do zdalnego repozytorium uruchom `pytest -q` oraz `python tools/check_runtime_dependencies.py --json`, aby upewnić się, że pipeline CI nie zgłosi regresji.

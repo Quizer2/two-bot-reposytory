@@ -1,0 +1,24 @@
+* text=auto eol=lf
+
+*.py text eol=lf
+*.pyi text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Mark binary artifacts explicitly
+*.db binary
+*.so binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
