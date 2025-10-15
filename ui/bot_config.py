@@ -1506,6 +1506,7 @@ class BotConfigWidget(QWidget):
         }
 
         def refresh_strategy_fields(strategy_key: Optional[str]):
+            strategy_key = (strategy_key or "").lower().strip()
             if not strategy_key:
                 return
             # Zachowaj aktualne wartości strategii zanim przełączymy widok
@@ -1558,8 +1559,11 @@ class BotConfigWidget(QWidget):
                 strategy_layout.addRow(f"{label_text}:", widget)
 
         if available_strategies:
-            refresh_strategy_fields(strategy_combo.currentData() or available_strategies[0])
-        strategy_combo.currentIndexChanged.connect(lambda _: refresh_strategy_fields(strategy_combo.currentData()))
+            initial_strategy_key = self._extract_strategy_key(strategy_combo) or available_strategies[0]
+            refresh_strategy_fields(initial_strategy_key)
+        strategy_combo.currentIndexChanged.connect(
+            lambda _: refresh_strategy_fields(self._extract_strategy_key(strategy_combo))
+        )
 
         strategy_section = self.create_collapsible_section(
             "Parametry strategii",
@@ -1636,11 +1640,12 @@ class BotConfigWidget(QWidget):
             if not name_value:
                 name_value = bot_data.get("name", f"Bot_{bot_data.get('id', len(self.bots_data) + 1)}")
 
-            pair_value = pair_widget.text().strip() if isinstance(pair_widget, QLineEdit) else bot_data.get("pair", "")
+            pair_value = self._normalise_pair_value(pair_widget, bot_data.get("pair", ""))
 
-            selected_strategy_key = strategy_combo.currentData() if isinstance(strategy_combo, QComboBox) else (bot_data.get("strategy") or bot_data.get("type") or "dca")
+            selected_strategy_key = self._extract_strategy_key(strategy_combo) if isinstance(strategy_combo, QComboBox) else None
             if not selected_strategy_key:
-                selected_strategy_key = "dca"
+                selected_strategy_key = (bot_data.get("strategy") or bot_data.get("type") or "dca")
+            selected_strategy_key = str(selected_strategy_key).lower().strip() or "dca"
 
             strategy_settings = self._collect_strategy_field_values(strategy_state)
             if strategy_state is not None:
@@ -1696,6 +1701,57 @@ class BotConfigWidget(QWidget):
             QMessageBox.information(self, "Błąd", error_message)
         finally:
             self.cancel_bot_edit()
+
+    def _extract_strategy_key(self, combo: Optional['QComboBox']) -> Optional[str]:
+        """Zwraca aktualnie wybraną strategię z kontrolki combo, z fallbackiem do etykiety."""
+        if combo is None or not isinstance(combo, QComboBox):
+            return None
+
+        role = None
+        qt_item_role = getattr(Qt, "ItemDataRole", None)
+        if qt_item_role is not None:
+            role = getattr(qt_item_role, "UserRole", None)
+
+        data = None
+        try:
+            if role is not None:
+                data = combo.currentData(role)
+            else:
+                data = combo.currentData()
+        except TypeError:
+            data = combo.currentData()
+
+        if not data and hasattr(combo, "currentText"):
+            data = combo.currentText()
+
+        if data is None:
+            return None
+
+        return str(data).strip().lower() or None
+
+    def _normalise_pair_value(self, widget: Optional[Any], default: str = "") -> str:
+        """Pobiera aktualnie wybraną parę handlową niezależnie od rodzaju kontrolki."""
+        text_value = ""
+        try:
+            if isinstance(widget, QComboBox) and hasattr(widget, "currentText"):
+                text_value = widget.currentText()
+            elif isinstance(widget, QLineEdit) and hasattr(widget, "text"):
+                text_value = widget.text()
+            elif hasattr(widget, "text"):
+                text_value = widget.text()
+        except Exception:
+            text_value = ""
+
+        if not text_value:
+            text_value = default or ""
+
+        normalised = str(text_value).strip()
+        if not normalised:
+            return default or ""
+
+        normalised = normalised.replace("-", "/")
+        normalised = normalised.replace(" ", "")
+        return normalised.upper()
     
     def cancel_bot_edit(self):
         """Anuluje edycję bota"""

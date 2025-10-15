@@ -113,6 +113,32 @@
     },
     "default_mode": "paper"
   },
+  "notifications": {
+    "enabled": true,
+    "sound": true,
+    "desktop": true,
+    "types": {
+      "trades": true,
+      "profit": true,
+      "errors": true,
+      "api": false
+    },
+    "channels": {
+      "email": {
+        "enabled": false,
+        "address": ""
+      },
+      "telegram": {
+        "enabled": false,
+        "token": "",
+        "chat_id": ""
+      },
+      "discord": {
+        "enabled": false,
+        "webhook": ""
+      }
+    }
+  },
   "test_section": {
     "test_value": "test_data",
     "updated_at": "2025-09-30T20:19:47.663861"

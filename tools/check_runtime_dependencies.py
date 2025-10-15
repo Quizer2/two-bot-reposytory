@@ -40,6 +40,7 @@ SOFTWARE_BACKEND_ENV_FILE = Path("config/qt_software_backend.env")
 RUNTIME_OVERRIDES_FILE = Path("config/runtime_overrides.json")
 PRODUCTION_ENV_FILE = Path("config/production.env")
 PRODUCTION_ENV_TEMPLATE = Path("config/production.env.example")
+DEFAULT_REPORT_PATH = Path("runtime_dependency_report.json")
 
 
 def check_modules() -> Dict[str, Dict[str, str]]:
@@ -219,7 +220,8 @@ def sync_sentry_overrides(env_path: Path) -> Dict[str, str]:
     return sentry_block
 
 
-def build_payload() -> Dict[str, object]:
+def build_payload() -> Tuple[Dict[str, object], Dict[str, Dict[str, str]], Dict[str, Dict[str, str]]]:
+    module_status = check_modules()
     libraries, missing_any = check_libraries()
     software_backend = None
     if missing_any:
@@ -230,7 +232,7 @@ def build_payload() -> Dict[str, object]:
     payload = {
         "platform": platform.platform(),
         "python": platform.python_version(),
-        "modules": check_modules(),
+        "modules": module_status,
         "system_libraries": libraries,
         "software_backend": software_backend,
         "notes": (
@@ -239,7 +241,16 @@ def build_payload() -> Dict[str, object]:
         ),
     }
 
-    return payload
+    module_failures = {
+        name: meta for name, meta in module_status.items() if meta.get("status") != "ok"
+    }
+    library_failures = {
+        name: meta
+        for name, meta in libraries.items()
+        if meta.get("status") not in {"ok", "bundled"}
+    }
+
+    return payload, module_failures, library_failures
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -261,7 +272,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv or None)
 
-    payload = build_payload()
+    if args.json:
+        # Flaga zachowana dla zgodności z pipeline'ami oczekującymi parametru.
+        # Skrypt zawsze zwraca JSON, więc nie musimy podejmować dodatkowych działań.
+        pass
 
     if args.json:
         # Flaga zachowana dla zgodności z pipeline'ami oczekującymi parametru.

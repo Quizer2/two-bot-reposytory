@@ -5,8 +5,14 @@ import os
 import threading
 from typing import Final
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication
+from utils.qt_compat import load_qt_names
+
+_QT_IMPORTS = {"QtCore": ["Qt"], "QtWidgets": ["QApplication"]}
+
+_PYQT_AVAILABLE, _qt_objects = load_qt_names(_QT_IMPORTS)
+
+Qt = _qt_objects["Qt"]
+QApplication = _qt_objects["QApplication"]
 
 _SOFTWARE_ENV: Final[dict[str, str]] = {
     "QT_OPENGL": "software",
@@ -39,11 +45,12 @@ def enable_software_rendering() -> None:
             os.environ.setdefault(key, value)
 
         # The attribute must be set before the QApplication instance is created.
-        QApplication.setAttribute(
-            Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True
-        )
-        QApplication.setAttribute(
-            Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True
-        )
+        if hasattr(QApplication, "setAttribute") and hasattr(Qt, "ApplicationAttribute"):
+            QApplication.setAttribute(
+                Qt.ApplicationAttribute.AA_UseSoftwareOpenGL, True
+            )
+            QApplication.setAttribute(
+                Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True
+            )
 
         _configured = True

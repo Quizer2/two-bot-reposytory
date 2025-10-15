@@ -16,6 +16,11 @@ from utils.config_manager import ConfigManager
 from core.integrated_data_manager import get_integrated_data_manager
 from core.trading_engine import OrderRequest, OrderSide, OrderType, OrderStatus
 
+try:
+    from app.api_config_manager import APIConfigManager
+except Exception:  # pragma: no cover - fallback when manager is unavailable
+    APIConfigManager = None  # type: ignore
+
 
 class TradingMode(Enum):
     """Tryby handlowe"""
@@ -104,11 +109,12 @@ class RiskLimits:
 class TradingModeManager:
     """Manager zarządzający trybami handlowymi"""
     
-    def __init__(self, config: ConfigManager, data_manager=None):
+    def __init__(self, config: ConfigManager, data_manager=None, api_config_manager=None):
         self.logger = logging.getLogger(__name__)
         self.config = config
         self.data_manager = data_manager or get_integrated_data_manager()
-        
+        self.api_config_manager = api_config_manager or (APIConfigManager() if APIConfigManager else None)
+
         # Synchronizacja
         self._lock = threading.RLock()
         self._async_lock = asyncio.Lock()
@@ -128,12 +134,28 @@ class TradingModeManager:
         # Managery
         self.risk_manager = None
         self.notification_manager = None
-        
+
         # Cache
         self._cache = {}
         self._cache_ttl = 30  # 30 sekund
         self._last_cache_update = {}
-        
+
+        # Migawka danych live używana przy blokadzie kluczy API.
+        # Przechowujemy ostatnie poprawne podsumowanie, listę sald oraz historię transakcji
+        # wyłącznie w pamięci, aby móc wyzerować widok bez utraty danych w bazie.
+        self._live_snapshot_cache: Dict[str, Any] = {
+            'summary': None,
+            'balances': None,
+            'transactions': None,
+            'timestamp': None,
+        }
+
+        # Stan poświadczeń dla handlu live
+        self._live_state_initialized = False
+        self._live_credentials_ready = False
+        self._live_credential_exchanges: List[str] = []
+        self._live_disabled_reason = "Brak zweryfikowanych kluczy API"
+
         self.logger.info("Trading Mode Manager utworzony")
     
     async def initialize(self) -> bool:
@@ -184,14 +206,17 @@ class TradingModeManager:
                 except ValueError:
                     self.current_mode = TradingMode.PAPER
                     self.logger.warning(f"Nieprawidłowy tryb w konfiguracji: {saved_mode}, używam Paper Trading")
-                
+
                 # Inicjalizuj Paper Trading
                 await self.initialize_paper_trading()
-                
+
+                # Zsynchronizuj stan kluczy API – brak kluczy oznacza blokadę trybu live
+                self.refresh_live_trading_status()
+
                 self._initialized = True
                 self.logger.info(f"Trading Mode Manager zainicjalizowany w trybie: {self.current_mode.value}")
                 return True
-                
+
         except Exception as e:
             self.logger.error(f"Błąd inicjalizacji Trading Mode Manager: {e}")
             return False
@@ -232,10 +257,14 @@ class TradingModeManager:
             
             # Jeśli przełączamy na Live Trading, sprawdź konfigurację
             if new_mode == TradingMode.LIVE:
+                if not self.refresh_live_trading_status():
+                    self.logger.error("Live Trading niedostępny – brak aktywnych kluczy API")
+                    return False
+
                 if not await self.verify_live_trading_setup():
                     self.logger.error("Live Trading nie jest poprawnie skonfigurowany")
                     return False
-            
+
             with self._lock:
                 self.current_mode = new_mode
             
@@ -286,18 +315,10 @@ class TradingModeManager:
     async def verify_live_trading_setup(self) -> bool:
         """Sprawdza czy Live Trading jest poprawnie skonfigurowany"""
         try:
-            # Sprawdź czy są skonfigurowane klucze API
-            exchanges_config = self.config.get_setting('app', 'exchanges', {})
-            
-            configured_exchanges = []
-            for exchange_name, config in exchanges_config.items():
-                if isinstance(config, dict) and config.get('api_key') and config.get('api_secret'):
-                    configured_exchanges.append(exchange_name)
-            
-            if not configured_exchanges:
-                self.logger.error("Brak skonfigurowanych kluczy API dla Live Trading")
+            if not self.live_trading_available():
+                self.logger.error(self._live_disabled_reason)
                 return False
-            
+
             # Sprawdź połączenie z Data Manager
             if hasattr(self.data_manager, 'test_connections'):
                 test_result = await self.data_manager.test_connections()
@@ -305,9 +326,12 @@ class TradingModeManager:
                     self.logger.error("Nie można nawiązać połączenia z giełdami")
                     return False
             
-            self.logger.info(f"Live Trading skonfigurowany dla giełd: {configured_exchanges}")
+            self.logger.info(
+                "Live Trading skonfigurowany dla giełd: %s",
+                ', '.join(self._live_credential_exchanges)
+            )
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Błąd weryfikacji Live Trading: {e}")
             return False
@@ -318,11 +342,51 @@ class TradingModeManager:
             if self.current_mode == TradingMode.PAPER:
                 return await self.get_paper_balances()
             else:
+                if not self.live_trading_available():
+                    self.logger.warning("Live Trading wyłączony – zwracam puste salda")
+                    return {}
                 return await self.get_live_balances()
                 
         except Exception as e:
             self.logger.error(f"Błąd pobierania sald: {e}")
             return {}
+
+    async def get_zeroed_live_view(self) -> Dict[str, Any]:
+        """Zwraca wyzerowaną migawkę portfela na potrzeby UI bez modyfikowania bazy danych."""
+        try:
+            snapshot = await self._load_live_snapshot_from_sources()
+            if snapshot:
+                self._cache_live_snapshot(
+                    summary=snapshot.get('summary'),
+                    balances=snapshot.get('balances'),
+                    transactions=snapshot.get('transactions'),
+                )
+
+            summary = self._live_snapshot_cache.get('summary')
+            balances = self._live_snapshot_cache.get('balances')
+            transactions = self._live_snapshot_cache.get('transactions') or []
+
+            zero_summary = self._zero_summary_clone(summary)
+            zero_balances = self._zero_balances_clone(balances)
+
+            return {
+                'summary': zero_summary,
+                'balances': zero_balances,
+                'transactions': [],  # Historia ma być pusta w widoku, ale nie jest kasowana z DB
+                'original_transactions': transactions,
+                'meta': {
+                    'cached_at': self._live_snapshot_cache.get('timestamp'),
+                    'source': 'live_disabled',
+                },
+            }
+        except Exception as exc:
+            self.logger.error("Nie udało się przygotować wyzerowanej migawki live: %s", exc)
+            return {
+                'summary': self._zero_summary_clone(None),
+                'balances': [],
+                'transactions': [],
+                'meta': {'source': 'live_disabled'},
+            }
     
     async def get_paper_balances(self) -> Dict[str, Dict]:
         """Pobiera salda Paper Trading"""
@@ -369,19 +433,23 @@ class TradingModeManager:
     async def get_live_balances(self) -> Dict[str, Dict]:
         """Pobiera prawdziwe salda z API giełd"""
         try:
+            if not self.live_trading_available():
+                self.logger.debug("Pominięto pobieranie sald live – brak aktywnych kluczy API")
+                return {}
+
             if not hasattr(self.data_manager, 'get_real_balance'):
                 self.logger.warning("Data Manager nie obsługuje prawdziwych sald")
                 return {}
-            
+
             # Pobierz prawdziwe saldo
             raw_balance = await self.data_manager.get_real_balance()
-            
+
             if not raw_balance:
                 self.logger.warning("Nie można pobrać sald z API")
                 return {}
-            
+
             balances = {}
-            
+
             # Przetwórz dane z API giełdy
             for symbol, balance_data in raw_balance.items():
                 if isinstance(balance_data, dict):
@@ -416,9 +484,12 @@ class TradingModeManager:
                             'change_24h': change_24h,
                             'mode': 'live'
                         }
-            
+
+            if balances:
+                self._cache_live_snapshot(balances=balances)
+
             return balances
-            
+
         except Exception as e:
             self.logger.error(f"Błąd pobierania prawdziwych sald: {e}")
             return {}
@@ -563,12 +634,16 @@ class TradingModeManager:
             self.logger.error(f"Błąd zlecenia Paper Trading: {e}")
             return None
     
-    async def place_live_order(self, symbol: str, side: str, amount: float, 
+    async def place_live_order(self, symbol: str, side: str, amount: float,
                               price: Optional[float] = None, order_type: str = 'market') -> Optional[TradingOrder]:
         """Składa prawdziwe zlecenie przez API"""
         try:
             self.logger.info(f"Składanie prawdziwego zlecenia: {side} {amount} {symbol} ({order_type})")
-            
+
+            if not self.live_trading_available():
+                self.logger.error("Zlecenia Live są zablokowane – brak aktywnych kluczy API")
+                return None
+
             if not hasattr(self.data_manager, 'get_real_balance'):
                 self.logger.error("Data Manager nie obsługuje prawdziwych sald")
                 return None
@@ -882,6 +957,15 @@ class TradingModeManager:
     async def get_live_statistics(self) -> Dict[str, Any]:
         """Pobiera statystyki Live Trading"""
         try:
+            if not self.live_trading_available():
+                return {
+                    'mode': 'live_disabled',
+                    'total_value': 0.0,
+                    'total_pnl': 0.0,
+                    'trades_count': 0,
+                    'orders_count': len(self.live_orders)
+                }
+
             total_value = 0.0
             total_pnl = 0.0
             try:
@@ -890,6 +974,13 @@ class TradingModeManager:
                     summary = portfolio_snapshot.get('summary') or {}
                     total_value = float(summary.get('total_value', 0.0) or 0.0)
                     total_pnl = float(summary.get('unrealized_pnl', 0.0) or 0.0)
+                    balances = portfolio_snapshot.get('balances')
+                    transactions = portfolio_snapshot.get('transactions')
+                    self._cache_live_snapshot(
+                        summary=summary,
+                        balances=balances,
+                        transactions=transactions,
+                    )
             except Exception as exc:
                 self.logger.debug(f"Nie udało się pobrać danych portfela: {exc}")
 
@@ -904,6 +995,266 @@ class TradingModeManager:
         except Exception as e:
             self.logger.error(f"Błąd statystyk Live Trading: {e}")
             return {}
+
+    async def _load_live_snapshot_from_sources(self) -> Dict[str, Any]:
+        """Ładuje ostatnią migawkę portfela z dostępnych źródeł bez modyfikacji bazy."""
+        snapshot: Dict[str, Any] = {}
+
+        if self.data_manager and hasattr(self.data_manager, 'get_portfolio_widget_data'):
+            try:
+                snapshot = await self.data_manager.get_portfolio_widget_data() or {}
+            except Exception as exc:
+                self.logger.debug("Nie udało się pobrać migawki portfela: %s", exc)
+                snapshot = {}
+
+        # Dla historii spróbuj pobrać transakcje – tylko do cache, nie do wyświetlenia
+        if self.data_manager and hasattr(self.data_manager, 'get_recent_trades'):
+            try:
+                trades = await self.data_manager.get_recent_trades(limit=100)
+                if snapshot is not None:
+                    snapshot = dict(snapshot)
+                    snapshot['transactions'] = trades
+            except Exception as exc:
+                self.logger.debug("Nie udało się pobrać historii transakcji: %s", exc)
+
+        return snapshot
+
+    def _cache_live_snapshot(self, summary=None, balances=None, transactions=None):
+        """Zapamiętuje ostatni znany stan live na potrzeby zerowania widoku."""
+        if summary is not None:
+            self._live_snapshot_cache['summary'] = summary
+        if balances is not None:
+            self._live_snapshot_cache['balances'] = balances
+        if transactions is not None:
+            self._live_snapshot_cache['transactions'] = transactions
+        if any(value is not None for value in (summary, balances, transactions)):
+            self._live_snapshot_cache['timestamp'] = datetime.now()
+
+    def _zero_summary_clone(self, summary):
+        """Zwraca kopię podsumowania z wyzerowanymi wartościami."""
+        from core.portfolio_manager import PortfolioSummary, AssetPosition
+
+        if summary is None:
+            return PortfolioSummary(
+                total_value=0.0,
+                available_balance=0.0,
+                invested_amount=0.0,
+                total_profit_loss=0.0,
+                total_profit_loss_percent=0.0,
+                daily_change=0.0,
+                daily_change_percent=0.0,
+                positions=[],
+                last_updated=datetime.now(),
+            )
+
+        if isinstance(summary, PortfolioSummary):
+            base_summary = PortfolioSummary(
+                total_value=summary.total_value,
+                available_balance=summary.available_balance,
+                invested_amount=summary.invested_amount,
+                total_profit_loss=summary.total_profit_loss,
+                total_profit_loss_percent=summary.total_profit_loss_percent,
+                daily_change=summary.daily_change,
+                daily_change_percent=summary.daily_change_percent,
+                positions=list(summary.positions or []),
+                last_updated=datetime.now(),
+            )
+        elif isinstance(summary, dict):
+            positions_raw = summary.get('positions') or []
+            positions: List[AssetPosition] = []
+            for position in positions_raw:
+                if isinstance(position, AssetPosition):
+                    positions.append(position)
+                elif isinstance(position, dict):
+                    positions.append(
+                        AssetPosition(
+                            symbol=str(position.get('symbol', 'UNKNOWN')),
+                            amount=float(position.get('amount', 0.0) or 0.0),
+                            average_price=float(position.get('average_price', 0.0) or 0.0),
+                            current_price=float(position.get('current_price', 0.0) or 0.0),
+                            value=float(position.get('value', 0.0) or 0.0),
+                            profit_loss=float(position.get('profit_loss', 0.0) or 0.0),
+                            profit_loss_percent=float(position.get('profit_loss_percent', 0.0) or 0.0),
+                            last_updated=datetime.now(),
+                        )
+                    )
+            base_summary = PortfolioSummary(
+                total_value=float(summary.get('total_value', 0.0) or 0.0),
+                available_balance=float(summary.get('available_balance', 0.0) or 0.0),
+                invested_amount=float(summary.get('invested_amount', 0.0) or 0.0),
+                total_profit_loss=float(summary.get('total_profit_loss', 0.0) or 0.0),
+                total_profit_loss_percent=float(summary.get('total_profit_loss_percent', 0.0) or 0.0),
+                daily_change=float(summary.get('daily_change', 0.0) or 0.0),
+                daily_change_percent=float(summary.get('daily_change_percent', 0.0) or 0.0),
+                positions=positions,
+                last_updated=datetime.now(),
+            )
+        else:
+            # Nieznany format – utwórz pusty obiekt
+            return PortfolioSummary(
+                total_value=0.0,
+                available_balance=0.0,
+                invested_amount=0.0,
+                total_profit_loss=0.0,
+                total_profit_loss_percent=0.0,
+                daily_change=0.0,
+                daily_change_percent=0.0,
+                positions=[],
+                last_updated=datetime.now(),
+            )
+
+        zero_positions: List[AssetPosition] = []
+        for position in base_summary.positions:
+            if isinstance(position, AssetPosition):
+                zero_positions.append(
+                    AssetPosition(
+                        symbol=position.symbol,
+                        amount=0.0,
+                        average_price=position.average_price,
+                        current_price=0.0,
+                        value=0.0,
+                        profit_loss=0.0,
+                        profit_loss_percent=0.0,
+                        last_updated=datetime.now(),
+                    )
+                )
+
+        base_summary.total_value = 0.0
+        base_summary.available_balance = 0.0
+        base_summary.invested_amount = 0.0
+        base_summary.total_profit_loss = 0.0
+        base_summary.total_profit_loss_percent = 0.0
+        base_summary.daily_change = 0.0
+        base_summary.daily_change_percent = 0.0
+        base_summary.positions = zero_positions
+        base_summary.last_updated = datetime.now()
+
+        return base_summary
+
+    def _zero_balances_clone(self, balances):
+        """Zwraca listę słowników z wyzerowanymi saldami i metadanymi oryginalnych wartości."""
+        zeroed: List[Dict[str, Any]] = []
+
+        if isinstance(balances, dict):
+            iterable = balances.items()
+        elif isinstance(balances, list):
+            iterable = enumerate(balances)
+        else:
+            iterable = []
+
+        for key, entry in iterable:
+            if hasattr(entry, 'asset') and hasattr(entry, 'free'):
+                symbol = getattr(entry, 'asset', str(key))
+                free_amount = float(getattr(entry, 'free', 0.0) or 0.0)
+                locked_amount = float(getattr(entry, 'locked', 0.0) or 0.0)
+                total_amount = free_amount + locked_amount
+                zeroed.append({
+                    'symbol': symbol,
+                    'balance': 0.0,
+                    'free': 0.0,
+                    'locked': 0.0,
+                    'usd_value': 0.0,
+                    'mode': 'live_disabled',
+                    'meta': {
+                        'original_free': free_amount,
+                        'original_locked': locked_amount,
+                        'original_total': total_amount,
+                    }
+                })
+            elif isinstance(entry, dict):
+                symbol = str(entry.get('symbol') or entry.get('asset') or key)
+                original_balance = float(entry.get('balance', entry.get('amount', 0.0)) or 0.0)
+                original_free = float(entry.get('free', 0.0) or 0.0)
+                original_locked = float(entry.get('locked', entry.get('hold', 0.0)) or 0.0)
+                zeroed.append({
+                    **{k: v for k, v in entry.items() if k not in {'balance', 'amount', 'free', 'locked', 'usd_value'}},
+                    'symbol': symbol,
+                    'balance': 0.0,
+                    'free': 0.0,
+                    'locked': 0.0,
+                    'usd_value': 0.0,
+                    'mode': 'live_disabled',
+                    'meta': {
+                        'original_free': original_free,
+                        'original_locked': original_locked,
+                        'original_total': original_balance if original_balance else original_free + original_locked,
+                    }
+                })
+
+        return zeroed
+
+    # ------------------------------------------------------------------
+    # Obsługa stanu poświadczeń Live Trading
+    # ------------------------------------------------------------------
+    def refresh_live_trading_status(self) -> bool:
+        """Odświeża stan poświadczeń Live Trading i zwraca czy handel live jest dostępny."""
+        try:
+            if not self.api_config_manager:
+                self._live_state_initialized = True
+                self._live_credentials_ready = False
+                self._live_credential_exchanges = []
+                self._live_disabled_reason = "Manager konfiguracji API nie jest dostępny"
+                return False
+
+            self.api_config_manager.load_api_config()
+            enabled = self.api_config_manager.get_enabled_exchanges()
+            valid = [
+                exchange
+                for exchange in enabled
+                if self.api_config_manager.validate_exchange_config(exchange)
+            ]
+
+            self._live_state_initialized = True
+            self._live_credentials_ready = bool(valid)
+            self._live_credential_exchanges = valid
+
+            if not self._live_credentials_ready:
+                self._live_disabled_reason = (
+                    "Brak aktywnych kluczy API i tajnych kluczy dla trybu Live Trading"
+                )
+            else:
+                self._live_disabled_reason = ""
+
+            if not self._live_credentials_ready and self.current_mode == TradingMode.LIVE:
+                with self._lock:
+                    self.current_mode = TradingMode.PAPER
+                try:
+                    self.config.set_setting(
+                        'app',
+                        'trading.default_mode',
+                        'paper',
+                        meta={'source': 'trading_mode_manager', 'reason': 'missing_api_keys'}
+                    )
+                except Exception as exc:
+                    self.logger.debug("Nie udało się zapisać wymuszonego trybu paper: %s", exc)
+
+            return self._live_credentials_ready
+
+        except Exception as exc:
+            self._live_state_initialized = True
+            self._live_credentials_ready = False
+            self._live_credential_exchanges = []
+            self._live_disabled_reason = f"Błąd weryfikacji kluczy API: {exc}"
+            self.logger.error("Błąd podczas odświeżania stanu kluczy API: %s", exc)
+            return False
+
+    def live_trading_available(self) -> bool:
+        """Zwraca informację czy dostępne są poprawne klucze dla handlu live."""
+        if not self._live_state_initialized:
+            self.refresh_live_trading_status()
+        return self._live_credentials_ready
+
+    def get_live_trading_block_reason(self) -> str:
+        """Zwraca powód blokady trybu live (lub pusty string gdy dostępny)."""
+        if not self._live_state_initialized:
+            self.refresh_live_trading_status()
+        return self._live_disabled_reason
+
+    def get_configured_live_exchanges(self) -> List[str]:
+        """Zwraca listę giełd z kompletnymi poświadczeniami live."""
+        if not self._live_state_initialized:
+            self.refresh_live_trading_status()
+        return list(self._live_credential_exchanges)
     
     async def get_total_balance_usd(self) -> float:
         """Pobiera całkowitą wartość portfela w USD"""

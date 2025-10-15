@@ -21,6 +21,10 @@ start.bat
 python main.py
 ```
 
+> ℹ️ **Chcesz upewnić się, że wszystko działa jak u użytkownika?**
+> Uruchom `python tools/user_acceptance_test.py`, aby automatycznie przejść przez kontrolę zależności,
+> testy i start GUI (możesz dodać `--json-output raport.json`, by zachować wyniki).
+
 ## 🎯 Pierwsze kroki w aplikacji
 
 ### 1. Konfiguracja giełdy (TESTNET!)

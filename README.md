@@ -8,6 +8,15 @@ python main.py             # uruchomienie aplikacji z GUI
 # Prometheus exporter: http://localhost:8000/metrics
 ```
 
+Dodaj `--write-report`, aby zapisać wynik kontroli do pliku
+(`runtime_dependency_report.json` domyślnie lub ścieżka podana parametrem `--report-path`).
+
+### Test akceptacyjny użytkownika
+```bash
+python tools/user_acceptance_test.py  # pełna ścieżka: zależności, pytest, compileall, start GUI
+```
+Raport JSON z wynikami można zapisać flagą `--json-output` i dołączyć do pipeline'u CI/CD.
+
 ## Testy
 ```bash
 pytest -q      # szybkie
@@ -33,3 +42,7 @@ docker compose up -d
 
 ## Backup/Export
 - UI: **Plik → Backup/Export…** (`Ctrl+E`)
+
+## Kontrybucja
+- Repozytorium oczekuje końcówek linii `LF` w plikach tekstowych; na systemach Windows przed pierwszym commitem ustaw `git config core.autocrlf false`, aby uniknąć ponownej konwersji i konfliktów przy pushu.
+- Przed wysłaniem zmian do zdalnego repozytorium uruchom `pytest -q` oraz `python tools/check_runtime_dependencies.py --json`, aby upewnić się, że pipeline CI nie zgłosi regresji.

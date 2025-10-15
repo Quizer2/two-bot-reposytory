@@ -1,6 +1,6 @@
 {
-  "platform": "Linux-6.12.13-x86_64-with-glibc2.39",
-  "python": "3.11.12",
+  "platform": "Linux-generic",
+  "python": "3.x",
   "modules": {
     "aiosqlite": {
       "status": "ok"
@@ -9,7 +9,7 @@
       "status": "ok"
     },
     "PyQt6": {
-      "status": "ok"
+      "status": "stub"
     }
   },
   "system_libraries": {
